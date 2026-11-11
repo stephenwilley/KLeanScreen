@@ -1,0 +1,19 @@
+#!/bin/sh
+# Install as /usr/local/sbin/kleanscreen-edid-load (root).
+# Gives the BTT HDMI5 an EDID with the one 800x480 timing the RK3566 can clock.
+# This kernel has no CONFIG_DRM_LOAD_EDID_FIRMWARE, so drm.edid_firmware= on the
+# command line is ignored; the debugfs override is the way in. It lasts until reboot.
+EDID=/usr/local/share/kleanscreen/btt-hdmi5.bin
+for i in $(seq 1 30); do
+    for d in /sys/kernel/debug/dri/*; do
+        if grep -q '^rockchip' "$d/name" 2>/dev/null && [ -e "$d/HDMI-A-1/edid_override" ]; then
+            cat "$EDID" > "$d/HDMI-A-1/edid_override" || exit 1
+            echo detect > /sys/class/drm/card0-HDMI-A-1/status   # re-probe now
+            echo "EDID override applied: $(cat /sys/class/drm/card0-HDMI-A-1/modes | tr '\n' ' ')"
+            exit 0
+        fi
+    done
+    sleep 1
+done
+echo "rockchip HDMI-A-1 debugfs entry not found" >&2
+exit 1
