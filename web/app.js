@@ -32,7 +32,7 @@ const S = {
   conn: 'connecting', klippy: 'startup', klippyMsg: '', st: {},
   prompt: null, heldPrompt: null,
   screen: 'home', sheet: -1, ask: null, speed: false, colour: null,
-  busy: null, toast: null, files: null, meta: {}, pick: null, log: [],
+  busy: null, toast: null, error: null, files: null, meta: {}, pick: null, log: [],
   blank: false, lastTap: Date.now(), finishedAt: null
 };
 
@@ -398,8 +398,9 @@ function draw() {
     if (S.colour) over += colourView(p);
     else if (S.prompt) over += promptView();
     if (S.ask) over += askView();
-    if (S.busy && !S.busy.hidden && !S.prompt && !S.colour && !S.ask) over += busyView();
+    if (S.busy && !S.busy.hidden && !S.prompt && !S.colour && !S.ask && !S.error) over += busyView();
   }
+  if (S.error && S.conn === 'open') over += errorView();
   const toast = S.toast ? `<div class="toast${S.toast.err ? ' err' : ''}">${esc(S.toast.text)}</div>` : '';
   const html = topbar(p) + `<main>${mainView}${over}${toast}</main>`;
   if (html === lastHtml) return;
@@ -430,10 +431,34 @@ function patch(a, b) {
 
 // ---------- actions ----------
 function toast(text, err) {
+  if (err) return showError(text, true);
   S.toast = { text, err };
   clearTimeout(toast.t);
   toast.t = setTimeout(() => { S.toast = null; render(); }, err ? 6000 : 2800);
   render();
+}
+
+// Errors get a card that stays until Dismiss. Klipper reports one failure several
+// times: the macro's own RESPOND TYPE=error (the full explanation), then an
+// "Error evaluating ..." line per macro level, then the RPC error for the command
+// that was sent. Once a card is open those summaries are dropped; a different
+// error is added below (at most four).
+function showError(text, summary) {
+  text = String(text).replace(/^Error evaluating .*?CommandError: /s, '').trim();
+  if (!text) return;
+  const e = S.error;
+  if (e && (summary || e.lines.includes(text))) return;
+  if (e) { if (e.lines.length < 4) e.lines.push(text); }
+  else S.error = { lines: [text] };
+  wake();
+  render();
+}
+
+function errorView() {
+  return `<div class="scrim"><div class="card errcard" style="width:620px">
+    <div class="cardhead"><h2 class="redtext">Error</h2></div>
+    <div class="errtext">${S.error.lines.map((l) => `<p>${esc(l)}</p>`).join('')}</div>
+    <div class="footer"><button class="btn primary" data-act="dismisserr">Dismiss</button></div></div></div>`;
 }
 
 const BUSY_NAMES = { G28: 'Homing', _LOAD_TOOL_RUN: 'Loading', _UNLOAD_TOOL_RUN: 'Unloading', PURGE_TOOL: 'Purging', _PURGE_RUN: 'Purging', _PURGE_DONE: 'Parking', M84: 'Motors off' };
@@ -487,6 +512,7 @@ const ACT = {
   flow(d) { const p = P(); mr.gcode(`M221 S${Math.max(50, p.flow + +d)}`).catch(() => {}); },
   speedreset() { mr.gcode('M220 S100\nM221 S100').catch(() => {}); },
   askbtn(i) { const b = S.ask.buttons[+i]; S.ask = null; if (b.run) b.run(); },
+  dismisserr() { S.error = null; },
   hidebusy() { if (S.busy) S.busy.hidden = true; },
   pbtn(where) {
     // where: "f:<footer index>", "i:<item index>" or "g<item index>:<button in group>"
@@ -559,10 +585,10 @@ const mr = new Moonraker(`ws://${HOST}/websocket`, OBJECTS, {
     if (/^\/\/ kleanscreen:sleep\b/.test(line)) sleepScreen();     // SCREEN_SLEEP / SCREEN_WAKE macros
     if (/^\/\/ kleanscreen:wake\b/.test(line)) wake();
     if (r && r.end) { S.prompt = null; S.heldPrompt = null; }
-    if (/^!! /.test(line)) toast(line.slice(3), true);
+    if (/^!! /.test(line)) showError(line.slice(3), /^!! Error evaluating /.test(line));
     if (S.busy) { const d = busyDetail(line); if (d) S.busy.detail = d; }
     render();
   }
 });
-window.KLEAN = { S, render };     // for debugging from the kiosk's cmd.js hook
+window.KLEAN = { S, render, showError };     // for debugging from the kiosk's cmd.js hook
 render();
