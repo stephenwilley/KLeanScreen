@@ -16,7 +16,7 @@ export class Moonraker {
     ws.onopen = () => {
       this.on.conn('open');
       this.call('server.connection.identify', {
-        client_name: 'KLeanScreen', version: '0.1', type: 'display', url: 'https://git.esstec.ca/stephen/KLeanScreen'
+        client_name: 'KLeanScreen', version: '0.1', type: 'display', url: 'https://github.com/stephenwilley/KLeanScreen'
       }).catch(() => {});
       this.startKlippy();
     };

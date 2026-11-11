@@ -8,8 +8,9 @@ for i in $(seq 1 30); do
     for d in /sys/kernel/debug/dri/*; do
         if grep -q '^rockchip' "$d/name" 2>/dev/null && [ -e "$d/HDMI-A-1/edid_override" ]; then
             cat "$EDID" > "$d/HDMI-A-1/edid_override" || exit 1
-            echo detect > /sys/class/drm/card0-HDMI-A-1/status   # re-probe now
-            echo "EDID override applied: $(cat /sys/class/drm/card0-HDMI-A-1/modes | tr '\n' ' ')"
+            c=/sys/class/drm/card${d##*/}-HDMI-A-1          # debugfs dri/<n> is card<n>
+            echo detect > "$c/status"                         # re-probe now
+            echo "EDID override applied: $(tr '\n' ' ' < "$c/modes")"
             exit 0
         fi
     done

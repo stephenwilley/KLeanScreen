@@ -224,8 +224,8 @@ systemd: KLeanScreen.service (a logind seat session on tty7)
 - **Redraws:** status updates arrive every 250 ms. The screen redraws at most
   twice a second for them, and only touches the page when something visible
   changed.
-- **Time zone:** the start script passes the system's UTC offset to WebKit,
-  because WebKit's built-in time zone rules can be older than the OS's.
+- **Clock:** times use the system's UTC offset, which the kiosk serves at
+  `/tz`, because WebKit's built-in time zone rules can be older than the OS's.
 
 Resource use on an RK3566 (four Cortex-A55 cores):
 
@@ -275,12 +275,24 @@ On the printer, two signals help over SSH. Both write to
 ## Uninstall
 
 ```sh
-sudo systemctl disable --now KLeanScreen kleanscreen-edid
-sudo rm -rf /etc/systemd/system/KLeanScreen.service* /etc/systemd/system/kleanscreen-edid.service
+sudo systemctl disable --now KLeanScreen
+sudo rm -rf /etc/systemd/system/KLeanScreen.service*
 sudo systemctl daemon-reload
 ```
 
-Then remove the `[include kleanscreen.cfg]` line and the Moonraker section.
+Then remove the `[include kleanscreen.cfg]` line, the `[update_manager KLeanScreen]`
+section, and the `KLeanScreen` line in `~/printer_data/moonraker.asvc`.
+
+If you installed the RK3566 extras:
+
+```sh
+sudo systemctl disable --now kleanscreen-edid hdmi-clock-fix
+sudo rm -f /etc/systemd/system/kleanscreen-edid.service /etc/systemd/system/hdmi-clock-fix.service \
+  /usr/local/sbin/kleanscreen-edid-load /usr/local/sbin/hdmi-clock-fix-load \
+  /lib/modules/$(uname -r)/extra/hdmi_clock_fix.ko
+sudo rm -rf /usr/local/share/kleanscreen
+sudo depmod && sudo systemctl daemon-reload
+```
 
 ## License
 

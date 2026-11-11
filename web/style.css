@@ -124,8 +124,6 @@ main { position: absolute; left: 0; right: 0; top: 56px; bottom: 0; }
 .spin { animation: spin .9s linear infinite; }
 @keyframes slide { 0% { left: -40%; } 100% { left: 100%; } }
 .indet { position: absolute; top: 0; bottom: 0; width: 40%; background: var(--accent); border-radius: 3px; animation: slide 1.2s ease-in-out infinite; }
-.toast { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); background: var(--text); color: var(--bg); font-weight: 600; font-size: 16px; padding: 12px 20px; border-radius: 999px; box-shadow: 0 10px 30px rgba(0,0,0,.5); white-space: nowrap; z-index: 9; max-width: 760px; overflow: hidden; text-overflow: ellipsis; }
-.toast.err { background: #ffb4b4; }
 .page { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 30px; text-align: center; }
 .page h1 { margin: 0; font-size: 34px; }
 .page p { margin: 0; font-size: 17px; color: var(--muted); max-width: 640px; line-height: 1.4; white-space: pre-wrap; }
