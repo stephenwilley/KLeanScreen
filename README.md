@@ -280,6 +280,11 @@ sudo systemctl daemon-reload
 
 Then remove the `[include kleanscreen.cfg]` line and the Moonraker section.
 
+## License
+
+MIT, see [LICENSE](LICENSE). The one exception is the kernel module in
+`extras/hdmi-clock-fix`, which is GPL-2.0 like the kernel it loads into.
+
 ## BTT HDMI5 on RK3566 (Orange Pi CM4 and similar)
 
 This panel's EDID offers only one timing, 800×480 at a 25 MHz pixel clock. The
