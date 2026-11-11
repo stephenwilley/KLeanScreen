@@ -499,6 +499,33 @@ async function gcode(script, title) {
   finally { clearTimeout(t); if (seq === busySeq) { S.busy = null; render(); } }
 }
 
+// First-layer babystep: while the Z offset row is showing, remember the global
+// part of the live offset (homing_origin.z minus the active tool's own offset,
+// the same split INDX uses). When the row goes away (layer 2, or the print is
+// cancelled or finishes on layer 1) and that differs from the saved
+// global_z_offset, offer to save it. INDX applies global_z_offset at every
+// pickup and Z homing, so it takes effect from the next print without a
+// restart. A multi-tool print may already have saved it at a tool change (the
+// INDX Z-sync), in which case nothing is asked.
+const zt = { on: false, global: 0 };
+const mm = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(3);
+function trackZ() {
+  const p = P();
+  const vars = (S.st.save_variables || {}).variables || {};
+  if (p.printing && p.layer === 1) {
+    const toolZ = p.active >= 0 ? +(vars[`t${p.active}_offset_z`] || 0) : 0;
+    zt.on = true; zt.global = Math.round((p.zoff - toolZ) * 1000) / 1000;
+    return;
+  }
+  if (!zt.on) return;
+  zt.on = false;
+  const saved = +(vars.global_z_offset || 0), g = zt.global;
+  if (Math.abs(g - saved) < 0.0005) return;
+  ask('Save the new Z offset?', `You babystepped ${mm(g - saved)} mm on the first layer. Saving makes the Z offset ${mm(g)} mm (now ${mm(saved)}) from the next print on.`, [
+    { label: 'No', cls: 'ghost' },
+    { label: 'Save', cls: 'primary', run: () => mr.gcode(`SAVE_VARIABLE VARIABLE=global_z_offset VALUE=${g.toFixed(3)}`).then(() => toast('Z offset saved')).catch((e) => toast(e.message, true)) }]);
+}
+
 function ask(title, text, buttons) { S.ask = { title, text, buttons }; render(); }
 function needHome(p, next) {
   if (p.homed) { next(); return; }
@@ -604,6 +631,7 @@ const mr = new Moonraker(`ws://${HOST}/websocket`, OBJECTS, {
     if (ps && ps.state === 'paused') wake();                       // needs attention
     if (ps && ps.state === 'complete') S.finishedAt = hhmm(new Date());
     if (ps && ps.state === 'printing') S.finishedAt = null;
+    trackZ();
     renderLazy();
   },
   gcode(line) {
