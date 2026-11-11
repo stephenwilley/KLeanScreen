@@ -259,6 +259,44 @@ function chipsFor(p, info, outlineActive) {
 }
 function thumbImg(info) { return info && info.thumb ? `<img src="${esc(info.thumb)}" alt="">` : ''; }
 
+// Thumbnail background: a dark print vanishes on the dark tile, so measure the
+// mean brightness of the opaque pixels and use a light grey behind dark ones.
+// Tapping the big thumbnail swaps it; the choice sticks per image until reload.
+// Moonraker sends CORS headers to trusted clients, so the canvas isn't tainted;
+// if it ever is, getImageData throws and the tile stays dark.
+const TONE = {};       // url -> 'light' | 'dark' | null (measuring)
+function thumbTone(info) {
+  const url = info && info.thumb;
+  if (!url) return '';
+  if (!(url in TONE)) {
+    TONE[url] = null;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      let tone = 'dark';
+      try {
+        const n = 64, c = document.createElement('canvas');
+        c.width = c.height = n;
+        const g = c.getContext('2d');
+        g.drawImage(img, 0, 0, n, n);
+        const d = g.getImageData(0, 0, n, n).data;
+        let sum = 0, w = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const a = d[i + 3] / 255;
+          if (a < 0.1) continue;
+          sum += a * (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+          w += a;
+        }
+        if (w && sum / w < 0.35) tone = 'light';
+      } catch (e) { /* tainted canvas: keep dark */ }
+      TONE[url] = tone; render();
+    };
+    img.onerror = () => { TONE[url] = 'dark'; };
+    img.src = url;
+  }
+  return TONE[url] === 'light' ? ' light' : '';
+}
+
 function printing(p) {
   if (p.file) loadMeta(p.file);
   const info = p.file ? fileInfo(p.file) : null;
@@ -268,7 +306,7 @@ function printing(p) {
   const log = S.log.slice(0, 12).map((m, i) => `<div class="msg${i === 0 ? ' now' : ''}"><span class="mt">${m.time}</span><span>${esc(m.text)}</span></div>`).join('');
   const z = p.zoff.toFixed(3).replace(/^(-?)0\./, '$10.').replace(/^(\d)/, '+$1').replace('+0.000', '0.000');
   return `<div class="printing">
-    <div class="pleft"><div class="thumb" style="width:290px;height:290px">${thumbImg(info)}</div>
+    <div class="pleft"><div class="thumb${thumbTone(info)}" style="width:290px;height:290px" data-act="thumbtone" data-arg="${esc(info && info.thumb || '')}">${thumbImg(info)}</div>
       <div class="pname">${esc(base(p.file))}</div><div class="chips">${info ? chipsFor(p, info, true) : ''}</div></div>
     <div class="pright">
       <div class="pct"><b>${Math.round(p.progress * 100)}%</b><span class="small" style="font-size:17px">${ready ? `Layer ${p.layer}${p.layers ? ' / ' + p.layers : ''}` : 'Getting ready'}</span></div>
@@ -320,7 +358,7 @@ function filesView(p) {
     loadMeta(f.path);
     const info = fileInfo(f.path);
     return `<button class="ftile" data-act="pickfile" data-arg="${esc(f.path)}">
-      <div class="thumb">${thumbImg(info)}</div><div class="fname">${esc(base(f.path))}</div>
+      <div class="thumb${thumbTone(info)}">${thumbImg(info)}</div><div class="fname">${esc(base(f.path))}</div>
       <div class="small">${age(f.modified)}${info && info.time ? ' · ' + dur(info.time) : ''}</div>
       <div class="chips">${info ? chipsFor(p, info, false) : ''}</div></button>`;
   }).join('') + dt;
@@ -340,7 +378,7 @@ function confirmView(p) {
       <div class="half"><span class="small" style="color:inherit;opacity:.8">Loaded</span><span class="sw" style="background:${m ? hex(p.cols[x.t]) : 'transparent'}"></span>${m === null ? 'not recorded' : esc(m || 'Empty')}</div></div>`;
   }).join('') : '';
   return `<div class="confirm">
-    <div class="thumb" style="width:260px;height:260px">${thumbImg(info)}</div>
+    <div class="thumb${thumbTone(info)}" style="width:260px;height:260px" data-act="thumbtone" data-arg="${esc(info && info.thumb || '')}">${thumbImg(info)}</div>
     <div style="flex:1;display:flex;flex-direction:column;gap:10px;min-width:0">
       <div class="pname" style="font-size:22px">${esc(base(path))}</div>
       <div class="small" style="font-size:15px">${info ? [info.time ? dur(info.time) : '', info.grams ? Math.round(info.grams) + ' g' : '', info.modified ? 'sliced ' + age(info.modified) : ''].filter(Boolean).join(' · ') : 'Reading file…'}</div>
@@ -563,6 +601,7 @@ function needHome(p, next) {
 const ACT = {
   none() {},
   wake() { wake(); },
+  thumbtone(url) { if (url && TONE[url]) TONE[url] = TONE[url] === 'light' ? 'dark' : 'light'; },
   estop() { mr.call('printer.emergency_stop').catch(() => {}); },
   fwrestart() { mr.call('printer.firmware_restart').catch((e) => toast(e.message, true)); },
   sheet(i) { S.sheet = +i; },
