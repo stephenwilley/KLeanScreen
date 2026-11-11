@@ -1,0 +1,30 @@
+# Install as /etc/systemd/system/KLeanScreen.service once KLeanScreen replaces
+# KlipperScreen (disable KlipperScreen.service first; both want tty7 and the display).
+# Modelled on KlipperScreen.service: PAMName and TTYPath give cage a logind seat
+# session, which it needs to open the DRM device and the touchscreen.
+[Unit]
+Description=KLeanScreen
+StartLimitIntervalSec=0
+Requires=hdmi-clock-fix.service kleanscreen-edid.service
+After=hdmi-clock-fix.service kleanscreen-edid.service moonraker.service
+After=systemd-user-sessions.service plymouth-quit-wait.service dbus.socket systemd-logind.service
+Wants=dbus.socket systemd-logind.service
+ConditionPathExists=/dev/tty0
+
+[Service]
+Type=simple
+User=stephen
+WorkingDirectory=/home/stephen/git/KLeanScreen
+ExecStart=/home/stephen/git/KLeanScreen/scripts/kleanscreen-start.sh
+Restart=always
+RestartSec=2
+UtmpIdentifier=tty7
+UtmpMode=user
+PAMName=%u
+TTYPath=/dev/tty7
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+
+[Install]
+WantedBy=multi-user.target

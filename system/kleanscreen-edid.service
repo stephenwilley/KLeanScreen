@@ -1,0 +1,15 @@
+# Install as /etc/systemd/system/kleanscreen-edid.service
+[Unit]
+Description=BTT HDMI5 EDID override (800x480 at 37.125 MHz)
+DefaultDependencies=no
+Wants=sys-kernel-debug.mount
+After=sys-kernel-debug.mount systemd-modules-load.service hdmi-clock-fix.service
+Before=KlipperScreen.service KLeanScreen.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/kleanscreen-edid-load
+
+[Install]
+WantedBy=multi-user.target
