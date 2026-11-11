@@ -129,3 +129,7 @@ main { position: absolute; left: 0; right: 0; top: 56px; bottom: 0; }
 .page h1 { margin: 0; font-size: 34px; }
 .page p { margin: 0; font-size: 17px; color: var(--muted); max-width: 640px; line-height: 1.4; white-space: pre-wrap; }
 .page .btn { min-width: 300px; height: 72px; font-size: 20px; }
+
+/* blanked screen: output stays on so touch works; first tap wakes */
+.blank { position: absolute; inset: 0; background: #000; z-index: 100; }
+.blanktext { position: absolute; font-size: 22px; font-weight: 600; color: #3b424c; white-space: nowrap; }

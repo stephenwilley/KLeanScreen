@@ -85,11 +85,19 @@ running. Status pushes arrive every 250 ms; the app redraws at most twice a
 second for them and only patches the DOM when the HTML changed (that took idle
 CPU from 7% to 2%).
 
+## Screen blanking
+
+The HDMI5's backlight ignores the HDMI signal and an undriven panel glows grey,
+so the screen "sleeps" by drawing black with the output left on, which keeps
+touch working. It blanks after 10 minutes without a tap (`?blank=<seconds>` in
+`KLEAN_QUERY` changes that), and on `SCREEN_SLEEP`. During a print a dim status
+line (%, layer, ETA) moves to a new spot every minute. The first tap only
+wakes the screen; it also wakes for `SCREEN_WAKE`, a macro prompt, a pause, or
+a Klipper shutdown. `SCREEN_SLEEP`/`SCREEN_WAKE` (in `klipperscreen.cfg`) send
+`RESPOND TYPE=command MSG="kleanscreen:sleep"` / `:wake`.
+
 ## Not done yet
 
 - Touch hasn't been tried on the panel (tested by script and snapshots only).
-- Screen sleep: `SCREEN_SLEEP`/`SCREEN_WAKE` in `klipperscreen.cfg` use `xset`,
-  which does nothing under cage. `wlr-randr --output HDMI-A-1 --off/--on` works,
-  but nothing wakes the panel on touch yet.
 - `KLeanScreen.service` and the EDID unit are drafts in `system/`, not installed.
 - Moonraker `[update_manager]` entry.
