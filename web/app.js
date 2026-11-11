@@ -336,7 +336,7 @@ function busyView() {
   return `<div class="scrim"><div class="card" style="width:520px">
     <div class="cardhead"><div style="display:flex;gap:14px;align-items:center">${ICON.spinner}<h2>${esc(b.title)}</h2></div>
       <button class="btn ghost" data-act="hidebusy" style="min-height:40px;font-size:15px">Hide</button></div>
-    <p>${esc(b.detail || (S.log[0] || {}).text || 'Working…')}</p>
+    <p class="busydetail">${esc(b.detail || (S.log[0] || {}).text || 'Working…')}</p>
     <div class="bar"><div class="indet"></div></div></div></div>`;
 }
 
