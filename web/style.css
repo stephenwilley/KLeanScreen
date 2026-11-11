@@ -138,3 +138,8 @@ main { position: absolute; left: 0; right: 0; top: 56px; bottom: 0; }
 .errtext p { overflow-wrap: anywhere; }
 .dtile { align-items: center; justify-content: center; text-align: center; gap: 8px; }
 .dtile .fname { max-width: 100%; }
+.tiles.narrow .tile { padding: 10px; } .tiles.narrow .tile .where { display: none; } .tiles.narrow .tile .mat { font-size: 16px; }
+
+/* ?demo in a desktop browser: the 800x480 screen centred, with a pointer */
+html.demo { width: auto; height: auto; min-height: 100vh; overflow: auto; background: #05070a; display: flex; align-items: center; justify-content: center; }
+html.demo body { cursor: auto; border-radius: 14px; box-shadow: 0 0 0 10px #1a1d22, 0 30px 80px rgba(0,0,0,.6); flex: none; }

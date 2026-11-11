@@ -128,7 +128,8 @@ function fileInfo(path) {
   return {
     tools: tools.map((t) => ({ t, color: colors[t], type: types[t] || types[0] || '' })),
     time: m.estimated_time, grams: m.filament_weight_total, modified: m.modified,
-    thumb: thumbs.length ? `${HTTP}/server/files/gcodes/${encodeURI(dir + thumbs[0].relative_path)}` : null
+    thumb: !thumbs.length ? null : /^data:/.test(thumbs[0].relative_path) ? thumbs[0].relative_path
+      : `${HTTP}/server/files/gcodes/${encodeURI(dir + thumbs[0].relative_path)}`
   };
 }
 async function loadMeta(path) {
@@ -169,7 +170,11 @@ function home(p) {
       <div class="row2"><span class="mat"><span class="sw" style="background:${m ? hex(p.cols[i]) : 'transparent'}"></span>${m === null ? '—' : m || 'Empty'}</span><span class="where">${on ? deg(p.ext.temperature) : ''}</span></div>
     </button>`);
   }
-  return `<div class="home"><div class="tiles">${tiles.join('')}</div>
+  // One row up to 4 tools, two rows up to 12, then three. The count comes from
+  // INDX's TOOL_POSITIONS.tool_count. From 6 columns the tiles drop the
+  // Docked/On head label; the tool on the head keeps its highlight.
+  const rows = p.n <= 4 ? 1 : p.n <= 12 ? 2 : 3, cols = Math.ceil(p.n / rows);
+  return `<div class="home"><div class="tiles${cols > 5 ? ' narrow' : ''}" style="grid-template-columns:repeat(${cols},1fr)">${tiles.join('')}</div>
     <div class="homerow">
       <button class="btn pbtn" style="flex:1" data-act="home">${ICON.home}<span>Home</span><span class="psub">${p.homed ? 'XYZ homed' : 'not homed'}</span></button>
       <button class="btn primary" style="flex:1.6;font-size:21px" data-act="files">${ICON.file}Print a file</button>
@@ -409,7 +414,7 @@ function sleepScreen() { if (!S.prompt && !S.ask && !S.colour) { S.blank = true;
 function wake() { S.lastTap = Date.now(); if (S.blank) { S.blank = false; render(); } }
 setInterval(() => {
   if (S.blank) renderLazy();                                  // minute drift and ETA
-  else if (Date.now() - S.lastTap > BLANK_S * 1000) sleepScreen();
+  else if (BLANK_S > 0 && Date.now() - S.lastTap > BLANK_S * 1000) sleepScreen();   // blank=0: never
 }, 10000);
 document.addEventListener('pointerdown', () => { S.lastTap = Date.now(); }, true);
 
@@ -644,9 +649,21 @@ async function seedLog() {
 
 // ---------- wiring ----------
 const parser = new PromptParser();
-const mr = new Moonraker(`ws://${HOST}/websocket`, OBJECTS, {
+// ?demo swaps Moonraker for an in-page pretend printer (demo.js).
+const DEMO = qs.has('demo');
+if (DEMO && !qs.has('bare')) document.documentElement.classList.add('demo');   // &bare: no frame, for screenshots
+const Client = DEMO ? (await import('./demo.js')).FakeMoonraker : Moonraker;
+const mr = new Client(`ws://${HOST}/websocket`, OBJECTS, {
   conn(c) { S.conn = c; if (c === 'open') seedLog(); render(); },
-  klippy(state, msg) { S.klippy = state; S.klippyMsg = msg || ''; if (state !== 'ready') wake(); render(); },
+  klippy(state, msg) {
+    S.klippy = state; S.klippyMsg = msg || '';
+    if (state !== 'ready') {        // a restart ends any macro prompt and running command
+      wake();
+      S.prompt = S.heldPrompt = S.colour = S.ask = S.busy = null; S.sheet = -1; S.speed = false;
+      parser.feed('// action:prompt_end');
+    }
+    render();
+  },
   status(st, changed) {
     S.st = st;
     const ds = changed.display_status;

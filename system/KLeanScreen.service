@@ -1,21 +1,21 @@
-# Install as /etc/systemd/system/KLeanScreen.service once KLeanScreen replaces
-# KlipperScreen (disable KlipperScreen.service first; both want tty7 and the display).
-# Modelled on KlipperScreen.service: PAMName and TTYPath give cage a logind seat
-# session, which it needs to open the DRM device and the touchscreen.
+# KLeanScreen on the printer's display. Install (fills in the user and home):
+#   sed -e "s|@USER@|$USER|g" -e "s|@HOME@|$HOME|g" system/KLeanScreen.service \
+#     | sudo tee /etc/systemd/system/KLeanScreen.service >/dev/null
+# Stop any other screen first (KlipperScreen, a desktop): both want tty7 and the display.
+# PAMName and TTYPath give cage a logind seat session, which it needs to open
+# the DRM device and the touchscreen.
 [Unit]
 Description=KLeanScreen
 StartLimitIntervalSec=0
-Requires=hdmi-clock-fix.service kleanscreen-edid.service
-After=hdmi-clock-fix.service kleanscreen-edid.service moonraker.service
-After=systemd-user-sessions.service plymouth-quit-wait.service dbus.socket systemd-logind.service
+After=moonraker.service systemd-user-sessions.service plymouth-quit-wait.service dbus.socket systemd-logind.service
 Wants=dbus.socket systemd-logind.service
 ConditionPathExists=/dev/tty0
 
 [Service]
 Type=simple
-User=stephen
-WorkingDirectory=/home/stephen/git/KLeanScreen
-ExecStart=/home/stephen/git/KLeanScreen/scripts/kleanscreen-start.sh
+User=@USER@
+WorkingDirectory=@HOME@/KLeanScreen
+ExecStart=@HOME@/KLeanScreen/scripts/kleanscreen-start.sh
 Restart=always
 RestartSec=2
 UtmpIdentifier=tty7
