@@ -33,7 +33,7 @@ const S = {
   conn: 'connecting', klippy: 'startup', klippyMsg: '', st: {},
   prompt: null, heldPrompt: null,
   screen: 'home', sheet: -1, ask: null, speed: false, colour: null,
-  busy: null, toast: null, error: null, files: null, meta: {}, pick: null, log: [],
+  busy: null, toast: null, dir: '', error: null, files: null, meta: {}, pick: null, log: [],
   blank: false, lastTap: Date.now(), finishedAt: null
 };
 
@@ -46,6 +46,7 @@ const dur = (s) => { s = Math.max(0, Math.round(s || 0)); const h = Math.floor(s
 const base = (p) => p.split('/').pop().replace(/\.gcode$/i, '');
 const hex = (c) => (c ? '#' + String(c).replace(/^#/, '') : 'transparent');
 const ICON = {
+  folder: '<svg width="96" height="80" viewBox="0 0 24 20" fill="none" stroke="#7d8794" stroke-width="1.4" stroke-linejoin="round"><path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h5l2 2.5h10A1.5 1.5 0 0 1 22 6v10.5a1.5 1.5 0 0 1-1.5 1.5h-17A1.5 1.5 0 0 1 2 16.5z"/></svg>',
   stop: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><polygon points="8,2.5 16,2.5 21.5,8 21.5,16 16,21.5 8,21.5 2.5,16 2.5,8"/><path d="M12 7v6M12 16.5v.5" stroke-linecap="round"/></svg>',
   home: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>',
   file: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/><path d="M10 11v6l5-3z"/></svg>',
@@ -298,8 +299,19 @@ function age(ts) {
 function filesView(p) {
   let body;
   if (S.files === null) body = '<div class="empty-note">Loading files…</div>';
-  else if (!S.files.length) body = '<div class="empty-note">No G-code files</div>';
-  else body = S.files.map((f) => {
+  else {
+    // Folders come from the paths in the full listing: a ".." tile below the
+    // top, one tile per subfolder (alphabetical), then the folder's own files,
+    // newest first.
+    const pre = S.dir ? S.dir + '/' : '';
+    const here = S.files.filter((f) => f.path.startsWith(pre));
+    const dirs = [...new Set(here.map((f) => f.path.slice(pre.length)).filter((r) => r.includes('/')).map((r) => r.split('/')[0]))]
+      .sort((a, b) => a.localeCompare(b));
+    const files = here.filter((f) => !f.path.slice(pre.length).includes('/')).slice(0, 60);
+    const up = S.dir ? `<button class="ftile dtile" data-act="updir">${ICON.folder}<div class="fname">..</div></button>` : '';
+    const dt = dirs.map((d) => `<button class="ftile dtile" data-act="opendir" data-arg="${esc(pre + d)}">${ICON.folder}<div class="fname">${esc(d)}</div>
+      <div class="small">${here.filter((f) => f.path.startsWith(pre + d + '/')).length} files</div></button>`).join('');
+    body = up + dt + (!dirs.length && !files.length ? '<div class="empty-note">No G-code files</div>' : '') + files.map((f) => {
     loadMeta(f.path);
     const info = fileInfo(f.path);
     return `<button class="ftile" data-act="pickfile" data-arg="${esc(f.path)}">
@@ -307,7 +319,8 @@ function filesView(p) {
       <div class="small">${age(f.modified)}${info && info.time ? ' · ' + dur(info.time) : ''}</div>
       <div class="chips">${info ? chipsFor(p, info, false) : ''}</div></button>`;
   }).join('');
-  return `<div class="files"><div class="fhead"><button class="btn ghost" data-act="back" style="min-width:110px">Back</button><h2>Print a file</h2></div>
+  }
+  return `<div class="files"><div class="fhead"><button class="btn ghost" data-act="back" style="min-width:110px">Back</button><h2>${S.dir ? esc(S.dir) : 'Print a file'}</h2></div>
     <div class="list">${body}</div></div>`;
 }
 
@@ -561,6 +574,8 @@ const ACT = {
   skipcolour() { endColour(); },
   home() { const p = P(); needHome(p, () => gcode('G28')); },
   motorsoff() { ask('Turn the motors off?', 'The axes will need homing again.', [{ label: 'Keep on', cls: 'ghost' }, { label: 'Motors off', cls: 'primary', run: () => gcode('M84') }]); },
+  opendir(d) { S.dir = d; },
+  updir() { S.dir = S.dir.includes('/') ? S.dir.replace(/\/[^/]*$/, '') : ''; },
   files() { S.screen = 'files'; S.pick = null; loadFiles(); },
   back() { S.screen = 'home'; },
   pickfile(path) { S.pick = path; S.screen = 'confirm'; loadMeta(path); },
@@ -607,7 +622,7 @@ async function loadFiles() {
   S.files = null; render();
   try {
     const r = await mr.call('server.files.list', { root: 'gcodes' });
-    S.files = r.filter((f) => /\.gcode$/i.test(f.path) && !f.path.startsWith('.')).sort((a, b) => b.modified - a.modified).slice(0, 60);
+    S.files = r.filter((f) => /\.gcode$/i.test(f.path) && !/(^|\/)\./.test(f.path)).sort((a, b) => b.modified - a.modified);
   } catch (e) { S.files = []; toast(e.message, true); }
   render();
 }
