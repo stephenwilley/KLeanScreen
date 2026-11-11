@@ -136,3 +136,5 @@ main { position: absolute; left: 0; right: 0; top: 56px; bottom: 0; }
 .busydetail { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .errtext { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 .errtext p { overflow-wrap: anywhere; }
+.dtile { align-items: center; justify-content: center; text-align: center; gap: 8px; }
+.dtile .fname { max-width: 100%; }
