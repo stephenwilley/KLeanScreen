@@ -102,7 +102,9 @@ function layerOf(ps, st) {
     let c = z <= flh + lh / 2 ? 1 : Math.round((z - flh) / lh) + 1;
     if (layers) c = Math.min(c, layers);
     const now = Date.now();
-    if (!est.layer) { if (c === 1) est.layer = 1; }
+    // Layer 1 shows at once; any other value must hold 1.5 s, which also
+    // picks up a print already under way when the page loads.
+    if (!est.layer && c === 1) est.layer = 1;
     else if (c !== est.cand) { est.cand = c; est.since = now; }
     else if (now - est.since >= 1500) est.layer = c;
   }
@@ -262,39 +264,46 @@ function thumbImg(info) { return info && info.thumb ? `<img src="${esc(info.thum
 // Thumbnail background: a dark print vanishes on the dark tile, so measure the
 // mean brightness of the opaque pixels and use a light grey behind dark ones.
 // Tapping the big thumbnail swaps it; the choice sticks per image until reload.
-// Moonraker sends CORS headers to trusted clients, so the canvas isn't tainted;
-// if it ever is, the load or getImageData fails and the tile stays dark.
+// Moonraker sends CORS headers to trusted clients; if the fetch fails anyway
+// the tile stays dark.
 const TONE = {};       // url -> 'light' | 'dark' | null (measuring)
 function thumbTone(info) {
   const url = info && info.thumb;
   if (!url) return '';
   if (!(url in TONE)) {
     TONE[url] = null;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      let tone = 'dark';
-      try {
-        const n = 64, c = document.createElement('canvas');
-        c.width = c.height = n;
-        const g = c.getContext('2d');
-        g.drawImage(img, 0, 0, n, n);
-        const d = g.getImageData(0, 0, n, n).data;
-        let sum = 0, w = 0;
-        for (let i = 0; i < d.length; i += 4) {
-          const a = d[i + 3] / 255;
-          if (a < 0.1) continue;
-          sum += a * (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
-          w += a;
-        }
-        if (w && sum / w < 0.35) tone = 'light';
-      } catch (e) { /* tainted canvas: keep dark */ }
-      TONE[url] = tone; render();
-    };
-    img.onerror = () => { TONE[url] = 'dark'; };
-    // Its own address: WebKit would otherwise reuse the <img>'s cached
-    // non-CORS response and refuse to let the canvas read it.
-    img.src = /^data:/.test(url) ? url : url + (url.includes('?') ? '&' : '?') + 'tone';
+    const done = (tone) => { TONE[url] = tone; render(); };
+    // Moonraker sends no cache headers, so WebKit may hand back a cached copy
+    // whose Access-Control-Allow-Origin names another page (or none). no-store
+    // always asks Moonraker, which then answers with this page's origin.
+    (/^data:/.test(url) ? Promise.resolve(url)
+      : fetch(url, { cache: 'no-store', mode: 'cors' }).then((r) => r.blob()).then((b) => URL.createObjectURL(b)))
+      .then((src) => {
+        const img = new Image();
+        img.onload = () => {
+          let tone = 'dark';
+          try {
+            const n = 64, c = document.createElement('canvas');
+            c.width = c.height = n;
+            const g = c.getContext('2d');
+            g.drawImage(img, 0, 0, n, n);
+            const d = g.getImageData(0, 0, n, n).data;
+            let sum = 0, w = 0;
+            for (let i = 0; i < d.length; i += 4) {
+              const a = d[i + 3] / 255;
+              if (a < 0.1) continue;
+              sum += a * (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+              w += a;
+            }
+            if (w && sum / w < 0.35) tone = 'light';
+          } catch (e) { /* unreadable: keep dark */ }
+          if (src.startsWith('blob:')) URL.revokeObjectURL(src);
+          done(tone);
+        };
+        img.onerror = () => done('dark');
+        img.src = src;
+      })
+      .catch(() => done('dark'));
   }
   return TONE[url] === 'light' ? ' light' : '';
 }
