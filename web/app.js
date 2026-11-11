@@ -263,7 +263,7 @@ function thumbImg(info) { return info && info.thumb ? `<img src="${esc(info.thum
 // mean brightness of the opaque pixels and use a light grey behind dark ones.
 // Tapping the big thumbnail swaps it; the choice sticks per image until reload.
 // Moonraker sends CORS headers to trusted clients, so the canvas isn't tainted;
-// if it ever is, getImageData throws and the tile stays dark.
+// if it ever is, the load or getImageData fails and the tile stays dark.
 const TONE = {};       // url -> 'light' | 'dark' | null (measuring)
 function thumbTone(info) {
   const url = info && info.thumb;
@@ -292,7 +292,9 @@ function thumbTone(info) {
       TONE[url] = tone; render();
     };
     img.onerror = () => { TONE[url] = 'dark'; };
-    img.src = url;
+    // Its own address: WebKit would otherwise reuse the <img>'s cached
+    // non-CORS response and refuse to let the canvas read it.
+    img.src = /^data:/.test(url) ? url : url + (url.includes('?') ? '&' : '?') + 'tone';
   }
   return TONE[url] === 'light' ? ' light' : '';
 }
