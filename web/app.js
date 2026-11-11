@@ -14,7 +14,8 @@ const OBJECTS = {
   toolhead: ['homed_axes'], gcode_move: ['homing_origin', 'speed_factor', 'extrude_factor', 'gcode_position'],
   extruder: ['temperature', 'target'], heater_bed: ['temperature', 'target'],
   'temperature_sensor chamber': ['temperature'], save_variables: null,
-  'gcode_macro TOOL_POSITIONS': ['tool_count'], webhooks: null
+  'gcode_macro TOOL_POSITIONS': ['tool_count'], webhooks: null,
+  configfile: ['save_config_pending']
 };
 
 const PALETTE = [
@@ -499,31 +500,39 @@ async function gcode(script, title) {
   finally { clearTimeout(t); if (seq === busySeq) { S.busy = null; render(); } }
 }
 
-// First-layer babystep: while the Z offset row is showing, remember the global
+// First-layer babystep: while the Z offset row is showing, remember the probe
 // part of the live offset (homing_origin.z minus the active tool's own offset,
-// the same split INDX uses). When the row goes away (layer 2, or the print is
-// cancelled or finishes on layer 1) and that differs from the saved
-// global_z_offset, offer to save it. INDX applies global_z_offset at every
-// pickup and Z homing, so it takes effect from the next print without a
-// restart. A multi-tool print may already have saved it at a tool change (the
-// INDX Z-sync), in which case nothing is asked.
+// the split the INDX macros use). When the print ends (finished, cancelled or
+// error) and that isn't zero, offer to save it the standard way:
+// Z_OFFSET_APPLY_PROBE (INDX's version folds it into [load_cell_probe] z_offset)
+// then SAVE_CONFIG, which restarts Klipper. That's why it waits for the end of
+// the print rather than layer 2. The live offset is set to tool + babystep
+// first, because the end G-code may have parked the tool and changed it.
 const zt = { on: false, global: 0 };
 const mm = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(3);
+const toolZ = (vars, t) => (t >= 0 ? +(vars[`t${t}_offset_z`] || 0) : 0);
 function trackZ() {
   const p = P();
   const vars = (S.st.save_variables || {}).variables || {};
   if (p.printing && p.layer === 1) {
-    const toolZ = p.active >= 0 ? +(vars[`t${p.active}_offset_z`] || 0) : 0;
-    zt.on = true; zt.global = Math.round((p.zoff - toolZ) * 1000) / 1000;
+    zt.on = true; zt.global = Math.round((p.zoff - toolZ(vars, p.active) - +(vars.global_z_offset || 0)) * 1000) / 1000;
     return;
   }
-  if (!zt.on) return;
+  if (!zt.on || p.printing) return;
   zt.on = false;
-  const saved = +(vars.global_z_offset || 0), g = zt.global;
-  if (Math.abs(g - saved) < 0.0005) return;
-  ask('Save the new Z offset?', `You babystepped ${mm(g - saved)} mm on the first layer. Saving makes the Z offset ${mm(g)} mm (now ${mm(saved)}) from the next print on.`, [
+  const g = zt.global;
+  if (Math.abs(g) < 0.0005) return;
+  const cf = S.st.configfile || {};
+  const other = cf.save_config_pending ? ' Other unsaved config changes will be saved with it.' : '';
+  ask('Save the new Z offset?', `You babystepped ${mm(g)} mm on the first layer. Saving runs Z_OFFSET_APPLY_PROBE and SAVE_CONFIG, which restarts Klipper.${other}`, [
     { label: 'No', cls: 'ghost' },
-    { label: 'Save', cls: 'primary', run: () => mr.gcode(`SAVE_VARIABLE VARIABLE=global_z_offset VALUE=${g.toFixed(3)}`).then(() => toast('Z offset saved')).catch((e) => toast(e.message, true)) }]);
+    { label: 'Save and restart', cls: 'primary', run: () => {
+      const v = (S.st.save_variables || {}).variables || {}, act = v.active_tool ?? -1;
+      const live = toolZ(v, act) + +(v.global_z_offset || 0) + g;
+      // SAVE_CONFIG restarts Klipper, so a dropped connection here is expected.
+      mr.gcode(`SET_GCODE_OFFSET Z=${live.toFixed(3)}\nZ_OFFSET_APPLY_PROBE\nSAVE_CONFIG`)
+        .catch((e) => { if (!/disconnect|restart|shutdown|closed/i.test(e.message)) toast(e.message, true); });
+    } }]);
 }
 
 function ask(title, text, buttons) { S.ask = { title, text, buttons }; render(); }
