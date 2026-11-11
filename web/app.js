@@ -315,6 +315,22 @@ function pageView() {
   return `<div class="page"><h1>Klipper is starting</h1><p>${esc(S.klippyMsg)}</p></div>`;
 }
 
+// One line of console output, cleaned up for the busy dialog, or null to skip it.
+// Skips prompt lines, TMC current reports and multi-line parameter dumps (only
+// the first line of a message is used, and a bare "key:" or "key: value" line
+// says nothing useful). M105 temperature reports get degree signs.
+function busyDetail(line) {
+  if (/^ok|^\/\/ action:|^\/\/ kleanscreen:/.test(line)) return null;
+  const first = line.split('\n')[0].replace(/^\/\/ /, '').replace(/^echo: /, '').trim();
+  if (!first || /current:/i.test(first) || /:$/.test(first) || /^\w+: -?[\d.]+$/.test(first)) return null;
+  if (/^(?:[A-Z]\d*:-?[\d.]+ \/-?[\d.]+\s*)+$/.test(first)) {
+    const parts = [...first.matchAll(/([A-Z]\d*):(-?[\d.]+) \/(-?[\d.]+)/g)]
+      .map(([, n, t, s]) => `${n === 'B' ? 'Bed' : n} ${(+t).toFixed(1)} / ${Math.round(+s)}°C`);
+    return parts.reverse().join('  ·  ');
+  }
+  return first.replace(/(\d) ?C\b/g, '$1°C');        // "heating T0 to 210 C..."
+}
+
 function busyView() {
   const b = S.busy;
   return `<div class="scrim"><div class="card" style="width:520px">
@@ -544,7 +560,7 @@ const mr = new Moonraker(`ws://${HOST}/websocket`, OBJECTS, {
     if (/^\/\/ kleanscreen:wake\b/.test(line)) wake();
     if (r && r.end) { S.prompt = null; S.heldPrompt = null; }
     if (/^!! /.test(line)) toast(line.slice(3), true);
-    if (S.busy && !/^\/\/ action:|^ok/.test(line)) S.busy.detail = line.replace(/^\/\/ /, '');
+    if (S.busy) { const d = busyDetail(line); if (d) S.busy.detail = d; }
     render();
   }
 });
