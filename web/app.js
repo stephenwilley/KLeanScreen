@@ -7,6 +7,7 @@ import { PromptParser } from './prompt.js';
 const qs = new URLSearchParams(location.search);
 const HOST = qs.get('moonraker') || '127.0.0.1:7125';
 const HTTP = `http://${HOST}`;
+const BLANK_S = +(qs.get('blank') || 600);     // blank after this many seconds without a tap
 
 const OBJECTS = {
   print_stats: null, virtual_sdcard: ['progress', 'is_active'], display_status: null, pause_resume: ['is_paused'],
@@ -31,7 +32,8 @@ const S = {
   conn: 'connecting', klippy: 'startup', klippyMsg: '', st: {},
   prompt: null, heldPrompt: null,
   screen: 'home', sheet: -1, ask: null, speed: false, colour: null,
-  busy: null, toast: null, files: null, meta: {}, pick: null, log: []
+  busy: null, toast: null, files: null, meta: {}, pick: null, log: [],
+  blank: false, lastTap: Date.now(), finishedAt: null
 };
 
 // ---------- helpers ----------
@@ -325,6 +327,35 @@ function busyView() {
 // Taps redraw on the next frame. Status pushes (Moonraker sends them every 250 ms,
 // mostly sub-degree temperature changes) redraw at most twice a second, and the
 // DOM is only patched when the generated HTML actually changed.
+// ---------- screen blanking ----------
+// The HDMI5's backlight ignores the HDMI signal (docs/buildlog.html#hdmi5), and an
+// undriven panel glows grey, so "sleep" is a black page with the output left on;
+// touch keeps working. During a print a dim status line moves once a minute so
+// nothing static sits on the panel. The first tap only wakes the screen.
+function blankView(p) {
+  let text = '';
+  if (p.printing) {
+    const info = p.file ? fileInfo(p.file) : null;
+    const est = info && info.time;
+    const left = est ? Math.max(0, est - p.printDur) : null;
+    text = (p.paused ? 'Paused · ' : '') + Math.round(p.progress * 100) + '%' +
+      (p.layer ? ` · Layer ${p.layer}${p.layers ? '/' + p.layers : ''}` : '') +
+      (left != null && !p.paused ? ' · ETA ' + hhmm(new Date(Date.now() + left * 1000)) : '');
+  } else if (p.state === 'complete' && S.finishedAt) {
+    text = 'Print finished ' + S.finishedAt;
+  }
+  const minute = Math.floor(Date.now() / 60000);
+  const r = (k) => ((Math.sin(minute * 12.9898 + k * 78.233) * 43758.5453) % 1 + 1) % 1;
+  return `<div class="blank" data-act="wake">${text ? `<div class="blanktext" style="left:${Math.round(30 + r(1) * 400)}px;top:${Math.round(30 + r(2) * 380)}px">${esc(text)}</div>` : ''}</div>`;
+}
+function sleepScreen() { if (!S.prompt && !S.ask && !S.colour) { S.blank = true; S.sheet = -1; S.speed = false; render(); } }
+function wake() { S.lastTap = Date.now(); if (S.blank) { S.blank = false; render(); } }
+setInterval(() => {
+  if (S.blank) renderLazy();                                  // minute drift and ETA
+  else if (Date.now() - S.lastTap > BLANK_S * 1000) sleepScreen();
+}, 10000);
+document.addEventListener('pointerdown', () => { S.lastTap = Date.now(); }, true);
+
 let raf = 0, lazyT = 0, lastHtml = '';
 function render() { if (!raf) raf = requestAnimationFrame(draw); }
 function renderLazy() { if (!lazyT && !raf) lazyT = setTimeout(() => { lazyT = 0; render(); }, 500); }
@@ -332,6 +363,11 @@ function draw() {
   raf = 0;
   clearTimeout(lazyT); lazyT = 0;
   const p = P();
+  if (S.blank) {       // skip building the hidden screens while blanked
+    const html = blankView(p);
+    if (html !== lastHtml) { lastHtml = html; morph(document.getElementById('app'), html); }
+    return;
+  }
   let mainView;
   if (S.conn !== 'open' || S.klippy !== 'ready') mainView = pageView();
   else if (p.printing) mainView = printing(p);
@@ -404,6 +440,7 @@ function needHome(p, next) {
 
 const ACT = {
   none() {},
+  wake() { wake(); },
   estop() { mr.call('printer.emergency_stop').catch(() => {}); },
   fwrestart() { mr.call('printer.firmware_restart').catch((e) => toast(e.message, true)); },
   sheet(i) { S.sheet = +i; },
@@ -489,16 +526,22 @@ async function seedLog() {
 const parser = new PromptParser();
 const mr = new Moonraker(`ws://${HOST}/websocket`, OBJECTS, {
   conn(c) { S.conn = c; if (c === 'open') seedLog(); render(); },
-  klippy(state, msg) { S.klippy = state; S.klippyMsg = msg || ''; render(); },
+  klippy(state, msg) { S.klippy = state; S.klippyMsg = msg || ''; if (state !== 'ready') wake(); render(); },
   status(st, changed) {
     S.st = st;
     const ds = changed.display_status;
     if (ds && ds.message) addLog(ds.message);
+    const ps = changed.print_stats;
+    if (ps && ps.state === 'paused') wake();                       // needs attention
+    if (ps && ps.state === 'complete') S.finishedAt = hhmm(new Date());
+    if (ps && ps.state === 'printing') S.finishedAt = null;
     renderLazy();
   },
   gcode(line) {
     const r = parser.feed(line);
-    if (r && r.show) { if (S.colour) S.heldPrompt = r.show; else S.prompt = r.show; S.sheet = -1; }
+    if (r && r.show) { if (S.colour) S.heldPrompt = r.show; else S.prompt = r.show; S.sheet = -1; wake(); }
+    if (/^\/\/ kleanscreen:sleep\b/.test(line)) sleepScreen();     // SCREEN_SLEEP / SCREEN_WAKE macros
+    if (/^\/\/ kleanscreen:wake\b/.test(line)) wake();
     if (r && r.end) { S.prompt = null; S.heldPrompt = null; }
     if (/^!! /.test(line)) toast(line.slice(3), true);
     if (S.busy && !/^\/\/ action:|^ok/.test(line)) S.busy.detail = line.replace(/^\/\/ /, '');
