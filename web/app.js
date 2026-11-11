@@ -10,11 +10,11 @@ const HTTP = `http://${HOST}`;
 const BLANK_S = +(qs.get('blank') || 900);     // blank after this many seconds without a tap
 
 const OBJECTS = {
-  print_stats: null, virtual_sdcard: ['progress', 'is_active'], display_status: null, pause_resume: ['is_paused'],
+  print_stats: null, virtual_sdcard: ['progress'], display_status: null,
   toolhead: ['homed_axes'], gcode_move: ['homing_origin', 'speed_factor', 'extrude_factor', 'gcode_position'],
   extruder: ['temperature', 'target'], heater_bed: ['temperature', 'target'],
   'temperature_sensor chamber': ['temperature'], save_variables: null,
-  'gcode_macro TOOL_POSITIONS': ['tool_count'], webhooks: null,
+  'gcode_macro TOOL_POSITIONS': ['tool_count'],
   configfile: ['save_config_pending']
 };
 
@@ -33,7 +33,7 @@ const S = {
   conn: 'connecting', klippy: 'startup', klippyMsg: '', st: {},
   prompt: null, heldPrompt: null,
   screen: 'home', sheet: -1, ask: null, speed: false, colour: null,
-  busy: null, toast: null, dir: '', error: null, files: null, meta: {}, pick: null, log: [],
+  busy: null, dir: '', error: null, files: null, meta: {}, pick: null, log: [],
   blank: false, lastTap: Date.now(), finishedAt: null
 };
 
@@ -41,10 +41,18 @@ const S = {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const deg = (v) => (v == null ? '–' : Math.round(v) + '°');
 const pad = (n) => String(n).padStart(2, '0');
-const hhmm = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
+// Clock: the system's UTC offset from the kiosk's /tz, because WebKit's own
+// time zone rules can lag the OS's. Elsewhere (the demo, a laptop) the
+// browser's offset is used. local() shifts a Date so getUTC* reads local time.
+let tzOff = null;                                    // minutes east of UTC
+async function syncTz() {
+  try { const r = await fetch('tz', { cache: 'no-store' }); if (r.ok) { tzOff = +(await r.text()); render(); } } catch (e) { /* use the browser's */ }
+}
+const local = (d) => new Date(d.getTime() + (tzOff ?? -d.getTimezoneOffset()) * 60000);
+const hhmm = (d) => { const l = local(d); return pad(l.getUTCHours()) + ':' + pad(l.getUTCMinutes()); };
 const dur = (s) => { s = Math.max(0, Math.round(s || 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}h ${pad(m)}m` : `${m}m`; };
 const base = (p) => p.split('/').pop().replace(/\.gcode$/i, '');
-const hex = (c) => (c ? '#' + String(c).replace(/^#/, '') : 'transparent');
+const hex = (c) => (/^#?[0-9a-f]{3,8}$/i.test(c || '') ? '#' + String(c).replace(/^#/, '') : 'transparent');
 const ICON = {
   folder: '<svg width="96" height="80" viewBox="0 0 24 20" fill="none" stroke="#7d8794" stroke-width="1.4" stroke-linejoin="round"><path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h5l2 2.5h10A1.5 1.5 0 0 1 22 6v10.5a1.5 1.5 0 0 1-1.5 1.5h-17A1.5 1.5 0 0 1 2 16.5z"/></svg>',
   stop: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><polygon points="8,2.5 16,2.5 21.5,8 21.5,16 16,21.5 8,21.5 2.5,16 2.5,8"/><path d="M12 7v6M12 16.5v.5" stroke-linecap="round"/></svg>',
@@ -65,7 +73,8 @@ function P() {
   const n = (st['gcode_macro TOOL_POSITIONS'] || {}).tool_count || 8;
   const mats = Array.isArray(vars.tool_materials) ? vars.tool_materials : null;
   const cols = Array.isArray(vars.tool_colours) ? vars.tool_colours : [];
-  const homed = /x/.test((st.toolhead || {}).homed_axes || '') && /y/.test(st.toolhead.homed_axes) && /z/.test(st.toolhead.homed_axes);
+  const axes = (st.toolhead || {}).homed_axes || '';
+  const homed = [...'xyz'].every((a) => axes.includes(a));
   return {
     n, mats, cols, homed,
     active: vars.active_tool ?? -1,
@@ -84,15 +93,18 @@ function P() {
 }
 // Layer: from SET_PRINT_STATS_INFO when the file has it. Otherwise (no layer
 // change G-code in the slicer) estimated from the commanded Z and the file's
-// layer heights. The estimate starts once the nozzle has extruded at first
-// layer height, follows Z only once it has held for 1.5 s (so a Z-hop on
-// layer 1 doesn't count as layer 3), and holds while paused (parked high).
-const est = { file: '', layer: 0, cand: 0, since: 0 };
+// layer heights, as Mainsail does, once filament has been used. A new value
+// must hold for 1.5 s. After the first reading the estimate only steps up one
+// layer at a time, so Z-hops (INDX lifts 1 mm for each tool change) don't
+// count; a bigger jump (adaptive layers) is taken once it has held for 30 s.
+// The first reading is layer 1 at once, or any layer after a mid-print reload.
+const layerEst = { file: '', layer: 0, cand: 0, since: 0 };
 function layerOf(ps, st) {
   const info = ps.info || {};
   if (info.current_layer != null) return { layer: info.current_layer, layers: info.total_layer };
   const m = S.meta[ps.filename];
   const live = ps.state === 'printing' || ps.state === 'paused';
+  const est = layerEst;
   if (!live || !m || !(m.layer_height > 0)) { est.file = ''; est.layer = 0; return { layer: null, layers: null }; }
   if (est.file !== ps.filename) Object.assign(est, { file: ps.filename, layer: 0, cand: 0, since: 0 });
   const lh = m.layer_height, flh = m.first_layer_height || lh;
@@ -102,11 +114,10 @@ function layerOf(ps, st) {
     let c = z <= flh + lh / 2 ? 1 : Math.round((z - flh) / lh) + 1;
     if (layers) c = Math.min(c, layers);
     const now = Date.now();
-    // Layer 1 shows at once; any other value must hold 1.5 s, which also
-    // picks up a print already under way when the page loads.
     if (!est.layer && c === 1) est.layer = 1;
+    else if (c <= est.layer) est.cand = 0;
     else if (c !== est.cand) { est.cand = c; est.since = now; }
-    else if (now - est.since >= 1500) est.layer = c;
+    else if (now - est.since >= (!est.layer || c === est.layer + 1 ? 1500 : 30000)) est.layer = c;
   }
   return { layer: est.layer || null, layers };
 }
@@ -114,9 +125,14 @@ function layerOf(ps, st) {
 const matOf = (p, i) => (p.mats ? (p.mats[i] || '') : null);   // null = not recorded yet
 
 // ---------- file metadata ----------
+const infoCache = new WeakMap();      // metadata object -> fileInfo result
 function fileInfo(path) {
   const m = S.meta[path];
   if (!m) return null;
+  if (!infoCache.has(m)) infoCache.set(m, makeInfo(path, m));
+  return infoCache.get(m);
+}
+function makeInfo(path, m) {
   let types = m.filament_type;
   if (typeof types === 'string') { try { types = JSON.parse(types); } catch (e) { types = types.split(/[;,]/); } }
   types = (types || []).map((t) => String(t).trim().toUpperCase());
@@ -131,16 +147,19 @@ function fileInfo(path) {
     tools: tools.map((t) => ({ t, color: colors[t], type: types[t] || types[0] || '' })),
     time: m.estimated_time, grams: m.filament_weight_total, modified: m.modified,
     thumb: !thumbs.length ? null : /^data:/.test(thumbs[0].relative_path) ? thumbs[0].relative_path
-      : `${HTTP}/server/files/gcodes/${encodeURI(dir + thumbs[0].relative_path)}`
+      : `${HTTP}/server/files/gcodes/${(dir + thumbs[0].relative_path).split('/').map(encodeURIComponent).join('/')}`
   };
 }
+const metaFailed = {};                // path -> time of the last failed load; retried after 30 s
 async function loadMeta(path) {
-  if (S.meta[path] !== undefined) return;
+  if (S.meta[path] !== undefined || Date.now() - (metaFailed[path] || 0) < 30000) return;
   S.meta[path] = null;
-  try { S.meta[path] = await mr.call('server.files.metadata', { filename: path }); } catch (e) { delete S.meta[path]; return; }
+  try { S.meta[path] = await mr.call('server.files.metadata', { filename: path }); }
+  catch (e) { delete S.meta[path]; metaFailed[path] = Date.now(); return; }
   render();
 }
-function chipWarn(p, t, type) { const m = matOf(p, t); return m !== null && m !== type; }
+// A file with no material type can't mismatch.
+function chipWarn(p, t, type) { const m = matOf(p, t); return !!type && m !== null && m !== type; }
 
 // ---------- views ----------
 function topbar(p) {
@@ -185,15 +204,14 @@ function home(p) {
 }
 
 function sheet(p) {
-  const i = S.sheet, m = matOf(p, i), on = i === p.active;
-  const lock = p.printing && !(p.paused && on);       // mid-print only the tool on the head, and only while paused
-  return `<div class="scrim" data-act="close"><div class="card" style="width:520px" data-act="none">
+  const i = S.sheet, m = matOf(p, i), on = i === p.active;      // not shown while printing or paused
+  return `<div class="scrim" data-act="close"><div class="card" style="width:520px">
     <div class="cardhead"><h2><span class="sw" style="display:inline-block;width:18px;height:18px;margin-right:10px;vertical-align:-2px;background:${m ? hex(p.cols[i]) : 'transparent'}"></span>T${i} · ${m === null ? 'material not recorded' : m || 'Empty'}</h2><span class="small">${on ? 'on the head' : 'docked'}</span></div>
     <div class="grid1">
-      <button class="btn primary pbtn" data-act="load" data-arg="${i}" ${lock ? 'disabled' : ''}><span>Load</span><span class="psub">pick the material, heat and load</span></button>
+      <button class="btn primary pbtn" data-act="load" data-arg="${i}"><span>Load</span><span class="psub">pick the material, heat and load</span></button>
       <div class="grid2">
-        <button class="btn pbtn" data-act="unload" data-arg="${i}" ${lock || m === '' ? 'disabled' : ''}><span>Unload</span><span class="psub">heat, ram and pull</span></button>
-        <button class="btn pbtn" data-act="purge" data-arg="${i}" ${lock || !m ? 'disabled' : ''}><span>Purge</span><span class="psub">extrude a bit more</span></button>
+        <button class="btn pbtn" data-act="unload" data-arg="${i}" ${m === '' ? 'disabled' : ''}><span>Unload</span><span class="psub">heat, ram and pull</span></button>
+        <button class="btn pbtn" data-act="purge" data-arg="${i}" ${!m ? 'disabled' : ''}><span>Purge</span><span class="psub">extrude a bit more</span></button>
       </div>
     </div>
     <div class="footer"><button class="btn ghost" data-act="colour" data-arg="${i}" style="min-width:0">Set colour</button><div style="flex:1"></div><button class="btn ghost" data-act="close">Close</button></div>
@@ -246,7 +264,7 @@ function colourView(p) {
 }
 
 function speedView(p) {
-  return `<div class="scrim" data-act="closespeed"><div class="card" style="width:560px" data-act="none">
+  return `<div class="scrim" data-act="closespeed"><div class="card" style="width:560px">
     <h2>Speed and flow</h2>
     <div class="zrow" style="background:var(--surface);box-shadow:none"><div class="zv"><div class="k">Speed</div><div class="vb">${p.speed}%</div></div>
       <button class="btn" data-act="speed" data-arg="-10">−10</button><button class="btn" data-act="speed" data-arg="10">+10</button></div>
@@ -280,6 +298,7 @@ function thumbTone(info) {
       : fetch(url, { cache: 'no-store', mode: 'cors' }).then((r) => r.blob()).then((b) => URL.createObjectURL(b)))
       .then((src) => {
         const img = new Image();
+        const finish = (tone) => { if (src.startsWith('blob:')) URL.revokeObjectURL(src); done(tone); };
         img.onload = () => {
           let tone = 'dark';
           try {
@@ -297,10 +316,9 @@ function thumbTone(info) {
             }
             if (w && sum / w < 0.35) tone = 'light';
           } catch (e) { /* unreadable: keep dark */ }
-          if (src.startsWith('blob:')) URL.revokeObjectURL(src);
-          done(tone);
+          finish(tone);
         };
-        img.onerror = () => done('dark');
+        img.onerror = () => finish('dark');
         img.src = src;
       })
       .catch(() => done('dark'));
@@ -308,11 +326,16 @@ function thumbTone(info) {
   return TONE[url] === 'light' ? ' light' : '';
 }
 
+// Seconds left: from the slicer's estimate, else extrapolated from progress.
+function timeLeft(p, info) {
+  if (info && info.time) return Math.max(0, info.time - p.printDur);
+  return p.progress > 0.02 ? p.printDur / p.progress - p.printDur : null;
+}
+
 function printing(p) {
   if (p.file) loadMeta(p.file);
   const info = p.file ? fileInfo(p.file) : null;
-  const est = info && info.time;
-  const left = est ? Math.max(0, est - p.printDur) : (p.progress > 0.02 ? p.printDur / p.progress - p.printDur : null);
+  const left = timeLeft(p, info);
   const ready = p.layer > 0;
   const log = S.log.slice(0, 12).map((m, i) => `<div class="msg${i === 0 ? ' now' : ''}"><span class="mt">${m.time}</span><span>${esc(m.text)}</span></div>`).join('');
   const z = p.zoff.toFixed(3).replace(/^(-?)0\./, '$10.').replace(/^(\d)/, '+$1').replace('+0.000', '0.000');
@@ -342,12 +365,12 @@ function printing(p) {
 }
 
 function age(ts) {
-  const d = new Date(ts * 1000), now = new Date();
-  const days = Math.floor((new Date(now.toDateString()) - new Date(d.toDateString())) / 864e5);
+  const d = new Date(ts * 1000), l = local(d);
+  const days = Math.floor(local(new Date()) / 864e5) - Math.floor(l / 864e5);
   if (days === 0) return 'Today ' + hhmm(d);
   if (days === 1) return 'Yesterday';
-  if (days < 7) return d.toLocaleDateString('en-GB', { weekday: 'short' }) + ' ' + hhmm(d);
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  if (days < 7) return l.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' }) + ' ' + hhmm(d);
+  return l.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 }
 
 function filesView(p) {
@@ -361,7 +384,7 @@ function filesView(p) {
     const here = S.files.filter((f) => f.path.startsWith(pre));
     const dirs = [...new Set(here.map((f) => f.path.slice(pre.length)).filter((r) => r.includes('/')).map((r) => r.split('/')[0]))]
       .sort((a, b) => a.localeCompare(b));
-    const files = here.filter((f) => !f.path.slice(pre.length).includes('/')).slice(0, 60);
+    const all = here.filter((f) => !f.path.slice(pre.length).includes('/')), files = all.slice(0, 60);
     const up = S.dir ? `<button class="ftile dtile" data-act="updir">${ICON.folder}<div class="fname">..</div></button>` : '';
     const dt = dirs.map((d) => `<button class="ftile dtile" data-act="opendir" data-arg="${esc(pre + d)}">${ICON.folder}<div class="fname">${esc(d)}</div>
       <div class="small">${here.filter((f) => f.path.startsWith(pre + d + '/')).length} files</div></button>`).join('');
@@ -372,7 +395,7 @@ function filesView(p) {
       <div class="thumb${thumbTone(info)}">${thumbImg(info)}</div><div class="fname">${esc(base(f.path))}</div>
       <div class="small">${age(f.modified)}${info && info.time ? ' · ' + dur(info.time) : ''}</div>
       <div class="chips">${info ? chipsFor(p, info, false) : ''}</div></button>`;
-  }).join('') + dt;
+  }).join('') + dt + (all.length > files.length ? `<div class="empty-note">Showing the newest ${files.length} of ${all.length} files</div>` : '');
   }
   return `<div class="files"><div class="fhead"><button class="btn ghost" data-act="back" style="min-width:110px">Back</button><h2>${S.dir ? esc(S.dir) : 'Print a file'}</h2></div>
     <div class="list">${body}</div></div>`;
@@ -435,9 +458,6 @@ function busyView() {
     <div class="bar"><div class="indet"></div></div></div></div>`;
 }
 
-// Taps redraw on the next frame. Status pushes (Moonraker sends them every 250 ms,
-// mostly sub-degree temperature changes) redraw at most twice a second, and the
-// DOM is only patched when the generated HTML actually changed.
 // ---------- screen blanking ----------
 // The HDMI5's backlight ignores the HDMI signal (docs/buildlog.html#hdmi5), and an
 // undriven panel glows grey, so "sleep" is a black page with the output left on;
@@ -446,9 +466,7 @@ function busyView() {
 function blankView(p) {
   let text = '';
   if (p.printing) {
-    const info = p.file ? fileInfo(p.file) : null;
-    const est = info && info.time;
-    const left = est ? Math.max(0, est - p.printDur) : null;
+    const left = timeLeft(p, p.file ? fileInfo(p.file) : null);
     text = (p.paused ? 'Paused · ' : '') + Math.round(p.progress * 100) + '%' +
       (p.layer ? ` · Layer ${p.layer}${p.layers ? '/' + p.layers : ''}` : '') +
       (left != null && !p.paused ? ' · ETA ' + hhmm(new Date(Date.now() + left * 1000)) : '');
@@ -467,6 +485,9 @@ setInterval(() => {
 }, 10000);
 document.addEventListener('pointerdown', () => { S.lastTap = Date.now(); }, true);
 
+// Taps redraw on the next frame. Status pushes (Moonraker sends them every 250 ms,
+// mostly sub-degree temperature changes) redraw at most twice a second, and the
+// DOM is only patched when the generated HTML actually changed.
 let raf = 0, lazyT = 0, lastHtml = '';
 function render() { if (!raf) raf = requestAnimationFrame(draw); }
 function renderLazy() { if (!lazyT && !raf) lazyT = setTimeout(() => { lazyT = 0; render(); }, 500); }
@@ -496,8 +517,7 @@ function draw() {
     if (S.busy && !S.busy.hidden && !S.prompt && !S.colour && !S.ask && !S.error) over += busyView();
   }
   if (S.error && S.conn === 'open') over += errorView();
-  const toast = S.toast ? `<div class="toast${S.toast.err ? ' err' : ''}">${esc(S.toast.text)}</div>` : '';
-  const html = topbar(p) + `<main>${mainView}${over}${toast}</main>`;
+  const html = topbar(p) + `<main>${mainView}${over}</main>`;
   if (html === lastHtml) return;
   lastHtml = html;
   morph(document.getElementById('app'), html);
@@ -525,14 +545,6 @@ function patch(a, b) {
 }
 
 // ---------- actions ----------
-function toast(text, err) {
-  if (err) return showError(text, true);
-  S.toast = { text, err };
-  clearTimeout(toast.t);
-  toast.t = setTimeout(() => { S.toast = null; render(); }, err ? 6000 : 2800);
-  render();
-}
-
 // Errors get a card that stays until Dismiss. Klipper reports one failure several
 // times: the macro's own RESPOND TYPE=error (the full explanation), then an
 // "Error evaluating ..." line per macro level, then the RPC error for the command
@@ -548,6 +560,7 @@ function showError(text, summary) {
   wake();
   render();
 }
+const fail = (e) => showError(e.message, true);      // for a failed RPC
 
 function errorView() {
   return `<div class="scrim"><div class="card errcard" style="width:620px">
@@ -563,58 +576,66 @@ async function gcode(script, title) {
   const cmd = script.split(/\s/)[0];
   const t = setTimeout(() => { if (seq === busySeq) { S.busy = { title: title || BUSY_NAMES[cmd] || cmd }; render(); } }, 600);
   try { await mr.gcode(script); }
-  catch (e) { toast(e.message.replace(/^.*CommandError: /, ''), true); }
+  catch (e) { showError(e.message.replace(/^.*CommandError: /, ''), true); }
   finally { clearTimeout(t); if (seq === busySeq) { S.busy = null; render(); } }
 }
 
-// First-layer babystep: while the Z offset row is showing, remember the probe
-// part of the live offset (homing_origin.z minus the active tool's own offset,
-// the split the INDX macros use). When the print ends (finished, cancelled or
-// error) and that isn't zero, offer to save it the standard way:
-// Z_OFFSET_APPLY_PROBE (INDX's version folds it into [load_cell_probe] z_offset)
+// First-layer babystep: while the Z offset row is showing, track the live offset
+// minus the active tool's own offset and the global_z_offset from the start of
+// layer 1 (INDX's CHANGE_TOOL copies the live babystep into global_z_offset, so
+// the current value would hide it). When the print finishes or is cancelled and
+// that isn't zero, offer to save it the standard way: Z_OFFSET_APPLY_PROBE
+// (INDX's version bakes live minus tool offset into [load_cell_probe] z_offset)
 // then SAVE_CONFIG, which restarts Klipper. That's why it waits for the end of
-// the print rather than layer 2. The live offset is set to tool + babystep
-// first, because the end G-code may have parked the tool and changed it.
-const zt = { on: false, global: 0 };
+// the print. The live offset is set first, because the end G-code may have
+// parked the tool and changed it.
+const zt = { on: false, base: 0, g: 0 };
 const mm = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(3);
 const toolZ = (vars, t) => (t >= 0 ? +(vars[`t${t}_offset_z`] || 0) : 0);
 function trackZ() {
   const p = P();
   const vars = (S.st.save_variables || {}).variables || {};
   if (p.printing && p.layer === 1) {
-    zt.on = true; zt.global = Math.round((p.zoff - toolZ(vars, p.active) - +(vars.global_z_offset || 0)) * 1000) / 1000;
+    if (!zt.on) { zt.on = true; zt.base = +(vars.global_z_offset || 0); }
+    zt.g = Math.round((p.zoff - toolZ(vars, p.active) - zt.base) * 1000) / 1000;
     return;
   }
   if (!zt.on || p.printing) return;
   zt.on = false;
-  const g = zt.global;
-  if (Math.abs(g) < 0.0005) return;
+  const g = zt.g;
+  if (Math.abs(g) < 0.0005 || !['complete', 'cancelled'].includes(p.state)) return;   // not after an error or e-stop
   const cf = S.st.configfile || {};
   const other = cf.save_config_pending ? ' Other unsaved config changes will be saved with it.' : '';
   ask('Save the new Z offset?', `You babystepped ${mm(g)} mm on the first layer. Saving runs Z_OFFSET_APPLY_PROBE and SAVE_CONFIG, which restarts Klipper.${other}`, [
     { label: 'No', cls: 'ghost' },
-    { label: 'Save and restart', cls: 'primary', run: () => {
-      const v = (S.st.save_variables || {}).variables || {}, act = v.active_tool ?? -1;
-      const live = toolZ(v, act) + +(v.global_z_offset || 0) + g;
+    { label: 'Save and restart', cls: 'primary', idle: true, run: () => {
+      const v = (S.st.save_variables || {}).variables || {};
+      const live = toolZ(v, v.active_tool ?? -1) + zt.base + g;
       // SAVE_CONFIG restarts Klipper, so a dropped connection here is expected.
       mr.gcode(`SET_GCODE_OFFSET Z=${live.toFixed(3)}\nZ_OFFSET_APPLY_PROBE\nSAVE_CONFIG`)
-        .catch((e) => { if (!/disconnect|restart|shutdown|closed/i.test(e.message)) toast(e.message, true); });
+        .catch((e) => { if (!/disconnect|restart|shutdown|closed/i.test(e.message)) fail(e); });
     } }]);
 }
 
+// A button marked idle: true only runs if no print is running or paused: a
+// dialog left open could otherwise act on a print started from elsewhere.
 function ask(title, text, buttons) { S.ask = { title, text, buttons }; render(); }
 function needHome(p, next) {
   if (p.homed) { next(); return; }
   ask('Is the bed clear?', "Z isn't homed, so this homes first and probes the bed centre.", [
-    { label: 'Cancel', cls: 'ghost' }, { label: 'Bed is clear', cls: 'primary', run: next }]);
+    { label: 'Cancel', cls: 'ghost' }, { label: 'Bed is clear', cls: 'primary', idle: true, run: next }]);
 }
 
 const ACT = {
-  none() {},
   wake() { wake(); },
   thumbtone(url) { if (url && TONE[url]) TONE[url] = TONE[url] === 'light' ? 'dark' : 'light'; },
-  estop() { mr.call('printer.emergency_stop').catch(() => {}); },
-  fwrestart() { mr.call('printer.firmware_restart').catch((e) => toast(e.message, true)); },
+  // If the websocket is down, try Moonraker's HTTP API before giving up.
+  estop() {
+    mr.call('printer.emergency_stop')
+      .catch(() => fetch(`${HTTP}/printer/emergency_stop`, { method: 'POST' }).then((r) => { if (!r.ok) throw new Error(r.statusText); }))
+      .catch((e) => showError(`STOP failed (${e.message}). Switch the printer off if it is still moving.`));
+  },
+  fwrestart() { mr.call('printer.firmware_restart').catch(fail); },
   sheet(i) { S.sheet = +i; },
   close() { S.sheet = -1; },
   load(i) { const p = P(); S.sheet = -1; needHome(p, () => gcode(`_LOAD_TOOL_MATERIAL TOOL=${i}`)); },
@@ -623,28 +644,32 @@ const ACT = {
   colour(i) { S.sheet = -1; S.colour = { tool: +i }; },
   pickcolour(c) {
     const t = S.colour.tool;
-    mr.gcode(`_SET_TOOL_VAR VAR=tool_colours TOOL=${t} VALUE=${c}`).catch((e) => toast(e.message, true));
+    mr.gcode(`_SET_TOOL_VAR VAR=tool_colours TOOL=${t} VALUE=${c}`).catch(fail);
     endColour();
   },
   skipcolour() { endColour(); },
   home() { const p = P(); needHome(p, () => gcode('G28')); },
-  motorsoff() { ask('Turn the motors off?', 'The axes will need homing again.', [{ label: 'Keep on', cls: 'ghost' }, { label: 'Motors off', cls: 'primary', run: () => gcode('M84') }]); },
+  motorsoff() { ask('Turn the motors off?', 'The axes will need homing again.', [{ label: 'Keep on', cls: 'ghost' }, { label: 'Motors off', cls: 'primary', idle: true, run: () => gcode('M84') }]); },
   opendir(d) { S.dir = d; },
   updir() { S.dir = S.dir.includes('/') ? S.dir.replace(/\/[^/]*$/, '') : ''; },
   files() { S.screen = 'files'; S.pick = null; loadFiles(); },
   back() { S.screen = 'home'; },
   pickfile(path) { S.pick = path; S.screen = 'confirm'; loadMeta(path); },
-  print() { const f = S.pick; S.screen = 'home'; S.pick = null; S.log = []; mr.call('printer.print.start', { filename: f }).catch((e) => toast(e.message, true)); },
-  pause() { ask('Pause print?', 'The head parks until you resume.', [{ label: 'Keep printing', cls: 'ghost' }, { label: 'Pause', cls: 'primary', run: () => mr.call('printer.print.pause').catch((e) => toast(e.message, true)) }]); },
-  resume() { mr.call('printer.print.resume').catch((e) => toast(e.message, true)); },
-  cancel() { ask('Cancel print?', 'This stops the print. It cannot be resumed.', [{ label: 'Keep printing', cls: 'ghost' }, { label: 'Cancel print', cls: 'danger', run: () => mr.call('printer.print.cancel').catch((e) => toast(e.message, true)) }]); },
-  z(d) { mr.gcode(`SET_GCODE_OFFSET Z_ADJUST=${d} MOVE=1`).catch((e) => toast(e.message, true)); },
+  print() { const f = S.pick; S.screen = 'home'; S.pick = null; S.log = []; mr.call('printer.print.start', { filename: f }).catch(fail); },
+  pause() { ask('Pause print?', 'The head parks until you resume.', [{ label: 'Keep printing', cls: 'ghost' }, { label: 'Pause', cls: 'primary', run: () => mr.call('printer.print.pause').catch(fail) }]); },
+  resume() { mr.call('printer.print.resume').catch(fail); },
+  cancel() { ask('Cancel print?', 'This stops the print. It cannot be resumed.', [{ label: 'Keep printing', cls: 'ghost' }, { label: 'Cancel print', cls: 'danger', run: () => mr.call('printer.print.cancel').catch(fail) }]); },
+  z(d) { mr.gcode(`SET_GCODE_OFFSET Z_ADJUST=${d} MOVE=1`).catch(fail); },
   speedsheet() { S.speed = true; },
   closespeed() { S.speed = false; },
-  speed(d) { const p = P(); mr.gcode(`M220 S${Math.max(10, p.speed + +d)}`).catch(() => {}); },
-  flow(d) { const p = P(); mr.gcode(`M221 S${Math.max(50, p.flow + +d)}`).catch(() => {}); },
-  speedreset() { mr.gcode('M220 S100\nM221 S100').catch(() => {}); },
-  askbtn(i) { const b = S.ask.buttons[+i]; S.ask = null; if (b.run) b.run(); },
+  speed(d) { mr.gcode(`M220 S${Math.max(10, P().speed + +d)}`).catch(fail); },
+  flow(d) { mr.gcode(`M221 S${Math.max(50, P().flow + +d)}`).catch(fail); },
+  speedreset() { mr.gcode('M220 S100\nM221 S100').catch(fail); },
+  askbtn(i) {
+    const b = S.ask && S.ask.buttons[+i];
+    S.ask = null;
+    if (b && b.run && !(b.idle && P().printing)) b.run();
+  },
   dismisserr() { S.error = null; },
   hidebusy() { if (S.busy) S.busy.hidden = true; },
   pbtn(where) {
@@ -667,7 +692,6 @@ function endColour() {
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
   if (!el || el.disabled) return;
-  if (el.dataset.act === 'none') { e.stopPropagation(); return; }
   if (el.classList.contains('scrim') && e.target !== el) return;   // taps inside a card don't close it
   const fn = ACT[el.dataset.act];
   if (fn) { fn(el.dataset.arg); render(); }
@@ -678,7 +702,11 @@ async function loadFiles() {
   try {
     const r = await mr.call('server.files.list', { root: 'gcodes' });
     S.files = r.filter((f) => /\.gcode$/i.test(f.path) && !/(^|\/)\./.test(f.path)).sort((a, b) => b.modified - a.modified);
-  } catch (e) { S.files = []; toast(e.message, true); }
+    for (const f of S.files) {          // re-sliced under the same name: drop the old details
+      const m = S.meta[f.path];
+      if (m && m.modified !== f.modified) { delete TONE[(fileInfo(f.path) || {}).thumb]; delete S.meta[f.path]; }
+    }
+  } catch (e) { S.files = []; fail(e); }
   render();
 }
 
@@ -699,6 +727,7 @@ async function seedLog() {
 
 // ---------- wiring ----------
 const parser = new PromptParser();
+let lastState;                     // print_stats.state at the previous status update
 // ?demo swaps Moonraker for an in-page pretend printer (demo.js).
 const DEMO = qs.has('demo');
 if (DEMO && !qs.has('bare')) document.documentElement.classList.add('demo');   // &bare: no frame, for screenshots
@@ -718,10 +747,13 @@ const mr = new Client(`ws://${HOST}/websocket`, OBJECTS, {
     S.st = st;
     const ds = changed.display_status;
     if (ds && ds.message) addLog(ds.message);
-    const ps = changed.print_stats;
-    if (ps && ps.state === 'paused') wake();                       // needs attention
-    if (ps && ps.state === 'complete') S.finishedAt = hhmm(new Date());
-    if (ps && ps.state === 'printing') S.finishedAt = null;
+    const was = lastState, now = (st.print_stats || {}).state;
+    lastState = now;
+    if (now !== was) {
+      if (now === 'paused') wake();                                 // needs attention
+      if (now === 'complete' && ['printing', 'paused'].includes(was)) S.finishedAt = hhmm(new Date());
+      if (now === 'printing' && was !== 'paused') { S.finishedAt = null; S.ask = null; }   // a print started: drop stale dialogs
+    }
     trackZ();
     renderLazy();
   },
@@ -736,5 +768,6 @@ const mr = new Client(`ws://${HOST}/websocket`, OBJECTS, {
     render();
   }
 });
-window.KLEAN = { S, render, showError };     // for debugging from the kiosk's cmd.js hook
+window.KLEAN = { S, mr, render, showError };     // for debugging from the kiosk's cmd.js hook
+syncTz(); setInterval(syncTz, 600000);       // DST changes
 render();

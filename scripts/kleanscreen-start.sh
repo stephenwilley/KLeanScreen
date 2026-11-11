@@ -13,18 +13,6 @@ fi
 LOG="${KLEAN_LOG:-$HOME/printer_data/logs/kleanscreen.log}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
-# WebKit takes time zones from ICU's built-in rules, which predate BC's move to
-# permanent UTC-7 (tzdata 2026e has it; ICU still says UTC-8). Hand the page the
-# system's current offset as a fixed Etc/GMT zone instead. Vancouver no longer
-# changes offset; elsewhere this would need a restart at each DST change.
-off=$(date +%z)                                   # e.g. -0700
-if [ "${off:3:2}" = 00 ]; then
-    h=$((10#${off:1:2}))
-    if [ "$h" = 0 ]; then export TZ=Etc/UTC
-    elif [ "${off:0:1}" = - ]; then export TZ=Etc/GMT+$h   # Etc/GMT signs are inverted
-    else export TZ=Etc/GMT-$h; fi
-fi
-
 # A PAM session puts cage in a logind scope outside the service's cgroup, so a
 # service restart can leave the previous cage running. Clear it first.
 pkill -u "$(id -u)" -x cage
@@ -33,6 +21,7 @@ pkill -KILL -u "$(id -u)" -x cage
 pkill -KILL -u "$(id -u)" -f 'kiosk/kiosk[.]py'
 rm -f "$XDG_RUNTIME_DIR"/wayland-*
 
+mv -f "$LOG" "$LOG.1" 2>/dev/null          # keep the previous run's log (and any crash)
 exec >"$LOG" 2>&1
 echo "kleanscreen: python $PY"
 exec /usr/bin/cage -d -s -- "$PY" "$DIR/kiosk/kiosk.py" "${KLEAN_QUERY:-}"

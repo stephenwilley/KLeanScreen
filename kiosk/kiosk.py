@@ -18,6 +18,7 @@ import os
 import signal
 import sys
 import threading
+import time
 
 import gi
 
@@ -33,6 +34,17 @@ os.makedirs(CTL, exist_ok=True)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/tz":
+            return super().do_GET()
+        # The system's current UTC offset in minutes, for the page's clock.
+        body = str(time.localtime().tm_gmtoff // 60).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
@@ -64,7 +76,10 @@ win.connect("destroy", Gtk.main_quit)
 
 def on_crash(_view, reason):
     print("kiosk: web process ended:", reason, "- reloading", flush=True)
-    GLib.timeout_add(1000, lambda: view.load_uri(url) and False)
+    def reload():
+        view.load_uri(url)
+        return False                                    # one-shot timeout
+    GLib.timeout_add(1000, reload)
 
 
 view.connect("web-process-terminated", on_crash)
