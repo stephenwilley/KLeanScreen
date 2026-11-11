@@ -3,7 +3,13 @@
 # Needs a logind seat session (systemd unit with PAMName= and TTYPath=, as
 # KlipperScreen.service has), so cage can take the DRM device and inputs.
 DIR="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
-PY="${KLEAN_PYTHON:-$HOME/.KlipperScreen-env/bin/python}"
+# Python needs PyGObject with cairo support: the system python3 once
+# python3-gi-cairo is installed, else KlipperScreen's venv (the trial set-up).
+PY="${KLEAN_PYTHON:-}"
+if [ -z "$PY" ]; then
+    if /usr/bin/python3 -c 'import gi._gi_cairo' 2>/dev/null; then PY=/usr/bin/python3
+    else PY="$HOME/.KlipperScreen-env/bin/python"; fi
+fi
 LOG="${KLEAN_LOG:-$HOME/printer_data/logs/kleanscreen.log}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
@@ -28,4 +34,5 @@ pkill -KILL -u "$(id -u)" -f 'kiosk/kiosk[.]py'
 rm -f "$XDG_RUNTIME_DIR"/wayland-*
 
 exec >"$LOG" 2>&1
+echo "kleanscreen: python $PY"
 exec /usr/bin/cage -d -s -- "$PY" "$DIR/kiosk/kiosk.py" "${KLEAN_QUERY:-}"
