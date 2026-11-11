@@ -149,6 +149,8 @@ echo KLeanScreen >> ~/printer_data/moonraker.asvc
   cancelled.
   - **Save and restart** runs `Z_OFFSET_APPLY_PROBE` and `SAVE_CONFIG`, which
     restarts Klipper.
+  - **Pause** and **Cancel** both ask first, so a stray tap doesn't stop
+    the print.
   - **While paused**, Load and Unload work on the tool on the head, for a
     filament change mid-print.
 - **STOP** is always in the top right. It sends an emergency stop straight

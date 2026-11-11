@@ -624,7 +624,7 @@ const ACT = {
   back() { S.screen = 'home'; },
   pickfile(path) { S.pick = path; S.screen = 'confirm'; loadMeta(path); },
   print() { const f = S.pick; S.screen = 'home'; S.pick = null; S.log = []; mr.call('printer.print.start', { filename: f }).catch((e) => toast(e.message, true)); },
-  pause() { mr.call('printer.print.pause').catch((e) => toast(e.message, true)); },
+  pause() { ask('Pause print?', 'The head parks until you resume.', [{ label: 'Keep printing', cls: 'ghost' }, { label: 'Pause', cls: 'primary', run: () => mr.call('printer.print.pause').catch((e) => toast(e.message, true)) }]); },
   resume() { mr.call('printer.print.resume').catch((e) => toast(e.message, true)); },
   cancel() { ask('Cancel print?', 'This stops the print. It cannot be resumed.', [{ label: 'Keep printing', cls: 'ghost' }, { label: 'Cancel print', cls: 'danger', run: () => mr.call('printer.print.cancel').catch((e) => toast(e.message, true)) }]); },
   z(d) { mr.gcode(`SET_GCODE_OFFSET Z_ADJUST=${d} MOVE=1`).catch((e) => toast(e.message, true)); },
