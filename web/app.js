@@ -7,7 +7,7 @@ import { PromptParser } from './prompt.js';
 const qs = new URLSearchParams(location.search);
 const HOST = qs.get('moonraker') || '127.0.0.1:7125';
 const HTTP = `http://${HOST}`;
-const BLANK_S = +(qs.get('blank') || 600);     // blank after this many seconds without a tap
+const BLANK_S = +(qs.get('blank') || 900);     // blank after this many seconds without a tap
 
 const OBJECTS = {
   print_stats: null, virtual_sdcard: ['progress', 'is_active'], display_status: null, pause_resume: ['is_paused'],
