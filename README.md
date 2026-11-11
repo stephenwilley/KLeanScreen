@@ -230,10 +230,10 @@ sudo systemctl daemon-reload && sudo systemctl enable --now kleanscreen-edid
 ```
 
 The drop-in also requires `hdmi-clock-fix.service`. It loads a small kernel
-module that restores the RK3566's 37.125 MHz HDMI reference clock, which these
-kernels leave at the wrong rate. The module isn't in this repository yet. If
-your board shows 800x480 in `modes` without it, delete that service from the
-drop-in.
+module that sets the RK3566's HDMI reference clock to 37.125 MHz, which some
+vendor kernels leave at 24 MHz. Its source, loader and unit are in
+[`extras/hdmi-clock-fix`](extras/hdmi-clock-fix), with build steps. If your
+board shows 800x480 in `modes` without it, delete that service from the drop-in.
 
 ## How it works
 

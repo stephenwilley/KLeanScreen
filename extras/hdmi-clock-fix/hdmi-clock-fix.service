@@ -1,0 +1,10 @@
+[Unit]
+Description=Restore RK3566 HDMI reference clock
+After=systemd-udevd.service
+Before=KLeanScreen.service
+ConditionPathExists=/sys/firmware/devicetree/base/hdmi@fe0a0000
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hdmi-clock-fix-load
+RemainAfterExit=yes
