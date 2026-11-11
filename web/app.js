@@ -301,8 +301,8 @@ function filesView(p) {
   if (S.files === null) body = '<div class="empty-note">Loading files…</div>';
   else {
     // Folders come from the paths in the full listing: a ".." tile below the
-    // top, one tile per subfolder (alphabetical), then the folder's own files,
-    // newest first.
+    // top, the folder's own files (newest first), then one tile per subfolder
+    // (alphabetical).
     const pre = S.dir ? S.dir + '/' : '';
     const here = S.files.filter((f) => f.path.startsWith(pre));
     const dirs = [...new Set(here.map((f) => f.path.slice(pre.length)).filter((r) => r.includes('/')).map((r) => r.split('/')[0]))]
@@ -311,14 +311,14 @@ function filesView(p) {
     const up = S.dir ? `<button class="ftile dtile" data-act="updir">${ICON.folder}<div class="fname">..</div></button>` : '';
     const dt = dirs.map((d) => `<button class="ftile dtile" data-act="opendir" data-arg="${esc(pre + d)}">${ICON.folder}<div class="fname">${esc(d)}</div>
       <div class="small">${here.filter((f) => f.path.startsWith(pre + d + '/')).length} files</div></button>`).join('');
-    body = up + dt + (!dirs.length && !files.length ? '<div class="empty-note">No G-code files</div>' : '') + files.map((f) => {
+    body = up + (!dirs.length && !files.length ? '<div class="empty-note">No G-code files</div>' : '') + files.map((f) => {
     loadMeta(f.path);
     const info = fileInfo(f.path);
     return `<button class="ftile" data-act="pickfile" data-arg="${esc(f.path)}">
       <div class="thumb">${thumbImg(info)}</div><div class="fname">${esc(base(f.path))}</div>
       <div class="small">${age(f.modified)}${info && info.time ? ' · ' + dur(info.time) : ''}</div>
       <div class="chips">${info ? chipsFor(p, info, false) : ''}</div></button>`;
-  }).join('');
+  }).join('') + dt;
   }
   return `<div class="files"><div class="fhead"><button class="btn ghost" data-act="back" style="min-width:110px">Back</button><h2>${S.dir ? esc(S.dir) : 'Print a file'}</h2></div>
     <div class="list">${body}</div></div>`;
