@@ -11,7 +11,7 @@ const BLANK_S = +(qs.get('blank') || 600);     // blank after this many seconds 
 
 const OBJECTS = {
   print_stats: null, virtual_sdcard: ['progress', 'is_active'], display_status: null, pause_resume: ['is_paused'],
-  toolhead: ['homed_axes'], gcode_move: ['homing_origin', 'speed_factor', 'extrude_factor'],
+  toolhead: ['homed_axes'], gcode_move: ['homing_origin', 'speed_factor', 'extrude_factor', 'gcode_position'],
   extruder: ['temperature', 'target'], heater_bed: ['temperature', 'target'],
   'temperature_sensor chamber': ['temperature'], save_variables: null,
   'gcode_macro TOOL_POSITIONS': ['tool_count'], webhooks: null
@@ -71,7 +71,7 @@ function P() {
     printing: ps.state === 'printing' || ps.state === 'paused',
     paused: ps.state === 'paused',
     file: ps.filename || '',
-    layer: (ps.info || {}).current_layer, layers: (ps.info || {}).total_layer,
+    ...layerOf(ps, st),
     printDur: ps.print_duration || 0, totalDur: ps.total_duration || 0,
     progress: (st.virtual_sdcard || {}).progress || 0,
     ext: st.extruder || {}, bed: st.heater_bed || {}, chamber: (st['temperature_sensor chamber'] || {}).temperature,
@@ -80,6 +80,33 @@ function P() {
     flow: Math.round(((st.gcode_move || {}).extrude_factor ?? 1) * 100)
   };
 }
+// Layer: from SET_PRINT_STATS_INFO when the file has it. Otherwise (no layer
+// change G-code in the slicer) estimated from the commanded Z and the file's
+// layer heights. The estimate starts once the nozzle has extruded at first
+// layer height, follows Z only once it has held for 1.5 s (so a Z-hop on
+// layer 1 doesn't count as layer 3), and holds while paused (parked high).
+const est = { file: '', layer: 0, cand: 0, since: 0 };
+function layerOf(ps, st) {
+  const info = ps.info || {};
+  if (info.current_layer != null) return { layer: info.current_layer, layers: info.total_layer };
+  const m = S.meta[ps.filename];
+  const live = ps.state === 'printing' || ps.state === 'paused';
+  if (!live || !m || !(m.layer_height > 0)) { est.file = ''; est.layer = 0; return { layer: null, layers: null }; }
+  if (est.file !== ps.filename) Object.assign(est, { file: ps.filename, layer: 0, cand: 0, since: 0 });
+  const lh = m.layer_height, flh = m.first_layer_height || lh;
+  const layers = m.object_height ? Math.round((m.object_height - flh) / lh) + 1 : null;
+  const z = ((st.gcode_move || {}).gcode_position || [])[2];
+  if (ps.state === 'printing' && z != null && (ps.filament_used || 0) > 0) {
+    let c = z <= flh + lh / 2 ? 1 : Math.round((z - flh) / lh) + 1;
+    if (layers) c = Math.min(c, layers);
+    const now = Date.now();
+    if (!est.layer) { if (c === 1) est.layer = 1; }
+    else if (c !== est.cand) { est.cand = c; est.since = now; }
+    else if (now - est.since >= 1500) est.layer = c;
+  }
+  return { layer: est.layer || null, layers };
+}
+
 const matOf = (p, i) => (p.mats ? (p.mats[i] || '') : null);   // null = not recorded yet
 
 // ---------- file metadata ----------
