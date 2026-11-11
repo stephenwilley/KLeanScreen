@@ -5,8 +5,8 @@ Runs as the only client of the cage Wayland compositor. The page is served over
 HTTP rather than file:// because Moonraker refuses websocket connections whose
 Origin is "null".
 
-Needs Python with PyGObject and pycairo (KlipperScreen's venv has both) plus
-gir1.2-webkit2-4.1.
+Needs Python with PyGObject and its cairo support (python3-gi, python3-gi-cairo)
+plus gir1.2-webkit2-4.1.
 
 Debug hooks, so the screen can be checked over SSH (files in $XDG_RUNTIME_DIR/kleanscreen):
   kill -USR1 <pid>  run cmd.js in the page, then save shot.png 700 ms later

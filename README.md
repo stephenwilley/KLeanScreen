@@ -27,11 +27,13 @@ systemd (KlipperScreen.service for now, KLeanScreen.service later)
 The page is served over HTTP rather than `file://` because Moonraker refuses
 websockets whose `Origin` is `null`.
 
-`kiosk.py` uses KlipperScreen's venv Python (`~/.KlipperScreen-env`), which has
-PyGObject and pycairo; the system Python lacks `gi._gi_cairo`.
+`kiosk.py` runs on the system Python, which needs `python3-gi-cairo` for
+WebKit snapshots. Until that's installed the start script falls back to
+KlipperScreen's venv (`~/.KlipperScreen-env`); the log's first line says which.
 
-Packages: `cage wlr-randr gir1.2-webkit2-4.1 fonts-inter` (installed with
-`--no-install-recommends`; about 187 MB with dependencies).
+Packages: `cage gir1.2-webkit2-4.1 fonts-inter python3-gi-cairo` (installed with
+`--no-install-recommends`; about 187 MB with dependencies). `wlr-randr` was only
+for testing.
 
 ### Display: the EDID override
 
@@ -96,8 +98,12 @@ wakes the screen; it also wakes for `SCREEN_WAKE`, a macro prompt, a pause, or
 a Klipper shutdown. `SCREEN_SLEEP`/`SCREEN_WAKE` (in `klipperscreen.cfg`) send
 `RESPOND TYPE=command MSG="kleanscreen:sleep"` / `:wake`.
 
+## Installing for good
+
+`system/` has `KLeanScreen.service` and the EDID boot unit
+(`kleanscreen-edid.service` + `kleanscreen-edid-load`); the comments at the top
+of each say where they go. They replace the trial hook in KlipperScreen.
+
 ## Not done yet
 
-- Touch hasn't been tried on the panel (tested by script and snapshots only).
-- `KLeanScreen.service` and the EDID unit are drafts in `system/`, not installed.
 - Moonraker `[update_manager]` entry.
