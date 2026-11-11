@@ -100,7 +100,7 @@ cat /sys/class/drm/card*-*/modes              # expect a line like 800x480
 ```
 
 If nothing is listed, the panel needs help first. For the BTT HDMI5 on an RK3566
-board, see [below](#btt-hdmi5-on-rk3566-orange-pi-cm4-and-similar).
+board, see [the note at the end](#btt-hdmi5-on-rk3566-orange-pi-cm4-and-similar).
 
 ### 4. The service
 
@@ -206,35 +206,6 @@ macros loop over that count, and the per-tool records size themselves to it.
 |---|---|
 | ![Four tools](docs/img/tools-4.png) | ![Twelve tools](docs/img/tools-12.png) |
 
-## BTT HDMI5 on RK3566 (Orange Pi CM4 and similar)
-
-This panel's EDID offers only one timing, 800×480 at a 25 MHz pixel clock. The
-RK3566 can't produce that, so the kernel drops the mode and the connector has
-no modes at all. Under X a custom modeline got around it; under KMS the EDID
-has to change. `edid/btt-hdmi5.bin` is the panel's EDID with that timing
-replaced by one at 37.125 MHz, made by `edid/make-edid.py`.
-
-Many kernels for these boards are built without
-`CONFIG_DRM_LOAD_EDID_FIRMWARE`, so `drm.edid_firmware=` doesn't work.
-`kleanscreen-edid.service` writes the EDID through debugfs at every boot
-instead:
-
-```sh
-cd ~/KLeanScreen
-sudo install -D -m 644 edid/btt-hdmi5.bin /usr/local/share/kleanscreen/btt-hdmi5.bin
-sudo install -m 755 system/kleanscreen-edid-load /usr/local/sbin/
-sudo install -m 644 system/kleanscreen-edid.service /etc/systemd/system/
-sudo install -D -m 644 system/KLeanScreen.service.d/10-btt-hdmi5-rk3566.conf \
-  /etc/systemd/system/KLeanScreen.service.d/10-btt-hdmi5-rk3566.conf
-sudo systemctl daemon-reload && sudo systemctl enable --now kleanscreen-edid
-```
-
-The drop-in also requires `hdmi-clock-fix.service`. It loads a small kernel
-module that sets the RK3566's HDMI reference clock to 37.125 MHz, which some
-vendor kernels leave at 24 MHz. Its source, loader and unit are in
-[`extras/hdmi-clock-fix`](extras/hdmi-clock-fix), with build steps. If your
-board shows 800x480 in `modes` without it, delete that service from the drop-in.
-
 ## How it works
 
 ```
@@ -308,3 +279,32 @@ sudo systemctl daemon-reload
 ```
 
 Then remove the `[include kleanscreen.cfg]` line and the Moonraker section.
+
+## BTT HDMI5 on RK3566 (Orange Pi CM4 and similar)
+
+This panel's EDID offers only one timing, 800×480 at a 25 MHz pixel clock. The
+RK3566 can't produce that, so the kernel drops the mode and the connector has
+no modes at all. Under X a custom modeline got around it; under KMS the EDID
+has to change. `edid/btt-hdmi5.bin` is the panel's EDID with that timing
+replaced by one at 37.125 MHz, made by `edid/make-edid.py`.
+
+Many kernels for these boards are built without
+`CONFIG_DRM_LOAD_EDID_FIRMWARE`, so `drm.edid_firmware=` doesn't work.
+`kleanscreen-edid.service` writes the EDID through debugfs at every boot
+instead:
+
+```sh
+cd ~/KLeanScreen
+sudo install -D -m 644 edid/btt-hdmi5.bin /usr/local/share/kleanscreen/btt-hdmi5.bin
+sudo install -m 755 system/kleanscreen-edid-load /usr/local/sbin/
+sudo install -m 644 system/kleanscreen-edid.service /etc/systemd/system/
+sudo install -D -m 644 system/KLeanScreen.service.d/10-btt-hdmi5-rk3566.conf \
+  /etc/systemd/system/KLeanScreen.service.d/10-btt-hdmi5-rk3566.conf
+sudo systemctl daemon-reload && sudo systemctl enable --now kleanscreen-edid
+```
+
+The drop-in also requires `hdmi-clock-fix.service`. It loads a small kernel
+module that sets the RK3566's HDMI reference clock to 37.125 MHz, which some
+vendor kernels leave at 24 MHz. Its source, loader and unit are in
+[`extras/hdmi-clock-fix`](extras/hdmi-clock-fix), with build steps. If your
+board shows 800x480 in `modes` without it, delete that service from the drop-in.
