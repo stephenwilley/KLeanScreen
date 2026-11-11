@@ -158,7 +158,7 @@ echo KLeanScreen >> ~/printer_data/moonraker.asvc
 
 ### Screen blanking
 
-The screen goes black after 10 minutes without a tap. The HDMI output and touch
+The screen goes black after 15 minutes without a tap. The HDMI output and touch
 stay on, because many panels' backlights ignore the signal and glow grey when
 it stops.
 - **Waking it:** the first tap only wakes the screen, so a tap on a black screen
@@ -184,7 +184,7 @@ Environment=KLEAN_QUERY=?blank=300
 
 | Setting | Default | |
 |---|---|---|
-| `blank=<seconds>` | `600` | Idle time before the screen blanks. `0` turns blanking off. |
+| `blank=<seconds>` | `900` | Idle time before the screen blanks. `0` turns blanking off. |
 | `moonraker=<host:port>` | `127.0.0.1:7125` | The Moonraker to talk to. |
 
 **Materials:** the Load prompt's buttons are in `_LOAD_TOOL_MATERIAL`, and the
