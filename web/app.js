@@ -145,7 +145,7 @@ function makeInfo(path, m) {
   const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
   return {
     tools: tools.map((t) => ({ t, color: colors[t], type: types[t] || types[0] || '' })),
-    time: m.estimated_time, grams: m.filament_weight_total, modified: m.modified,
+    time: m.estimated_time, grams: m.filament_weight_total, filament: m.filament_total, modified: m.modified,
     thumb: !thumbs.length ? null : /^data:/.test(thumbs[0].relative_path) ? thumbs[0].relative_path
       : `${HTTP}/server/files/gcodes/${(dir + thumbs[0].relative_path).split('/').map(encodeURIComponent).join('/')}`
   };
@@ -326,10 +326,15 @@ function thumbTone(info) {
   return TONE[url] === 'light' ? ' light' : '';
 }
 
-// Seconds left: from the slicer's estimate, else extrapolated from progress.
+// Seconds left: the slicer's estimate, blended towards the average of the
+// file- and filament-based ones as the print goes on (Mainsail's default).
 function timeLeft(p, info) {
-  if (info && info.time) return Math.max(0, info.time - p.printDur);
-  return p.progress > 0.02 ? p.printDur / p.progress - p.printDur : null;
+  const t = p.printDur, f = p.progress, used = (S.st.print_stats || {}).filament_used;
+  const seen = [f, info && info.filament && used / info.filament].filter((x) => x > 0.02).map((x) => t / x - t);
+  const slicer = info && info.time ? Math.max(0, info.time - t) : null;
+  if (!seen.length) return slicer;
+  const avg = seen.reduce((a, b) => a + b) / seen.length;
+  return slicer == null ? avg : slicer * (1 - f) + avg * f;
 }
 
 function printing(p) {
